@@ -1,5 +1,5 @@
 /*
-GENO 0034.001.01 - 20240906 Create Subscriber Base Genome PRSTN Tables
+GENO 0034.001.01 - 20240906 Create Genome PRSTN Subscriber Base
 Includes Lapsed Subscribers
 Includes Last Content Segment
 Excludes "Print-only"
@@ -10,7 +10,7 @@ declare report_date date default cast(current_date('Australia/Sydney') - 1 as da
 declare last_week_flag int64 default 1;
 declare last_fy_flag int64 default 1;
 
-create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base` 
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base_test` 
 
 -- partition by base_date
 
