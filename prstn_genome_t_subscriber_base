@@ -437,7 +437,7 @@ tx1.*
 from subscriber_base_txfm_1 tx1
 
 where 1=1
-and tx1.classification_level_2 not in('Print-only')
+-- and tx1.classification_level_2 not in('Print-only')
 
 
 )
