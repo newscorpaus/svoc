@@ -12,9 +12,9 @@ declare last_fy_flag int64 default 1;
 
 create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base_test` 
 
--- partition by base_date
+partition by report_date
 
--- cluster by subscriber_id_src
+cluster by subscriber_id_src, subscription_id_src, rate_plan_code
 
 as
 
