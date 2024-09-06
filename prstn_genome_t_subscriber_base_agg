@@ -1,0 +1,210 @@
+/*
+GENO 0034.002.01 - 20240906 Create Genome PRSTN Subscriber Base Agg
+Includes Lapsed Subscribers
+Includes Last Content Segment
+Excludes "Print-only"
+Version Date: 20240906
+*/
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base_agg_test`
+
+partition by report_date
+
+cluster by subscriber_id_src, combined_rate_plan_code
+
+as
+
+with subscriber_engagement
+
+as
+
+(
+select 
+
+ces.report_date_name
+, ces.report_date
+, ces.subscriber_id_src
+, ces.member_type
+, ces.subscriber_last_28_days_active_days
+, ces.subscriber_last_28_days_visit_count
+, ces.subscriber_last_28_days_page_view_count
+, ces.subscriber_last_28_days_article_view_count
+, ces.combined_top_5_site_section_last_28_days
+, ces.combined_site_section_last_28_days_page_view_count
+, ces.subscriber_top_5_site_section_details
+, ces.combined_top_5_source_code_last_28_days
+, ces.combined_source_code_last_28_days_page_view_count
+, ces.subscriber_top_5_source_code_details
+, ces.combined_top_5_device_type_last_28_days
+, ces.combined_device_type_last_28_days_page_view_count
+, ces.subscriber_top_5_device_type_details
+
+from `nau-data-nprod-dataservices.prstn_genome.t_subscriber_consumption_events_staging`  ces
+
+where 1=1
+
+)
+
+, 
+
+subscriber_base
+
+as 
+
+(
+select 
+
+sb.*
+
+from `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base`  sb
+
+where 1=1
+-- Filter to be applied for member_types here
+-- Filter to be applied for available time periods here
+--and sf.member_type in('subscriber')
+--and sf.report_date_name = 'yesterday'
+
+)
+
+, 
+
+subscriber_view
+
+as
+
+(
+select 
+
+lv1.*
+, se.subscriber_top_5_site_section_details
+, se.subscriber_top_5_source_code_details
+, se.subscriber_top_5_device_type_details
+
+from
+(
+select 
+
+sv.report_date_name
+, sv.report_date
+, sv.member_type
+, sv.dw_subscriber_party_id
+, sv.subscriber_id_src
+, sv.subscriber_tenure_order
+, sv.dw_subscriber_start_datetime
+, sv.dw_subscriber_end_datetime
+, sv.subscriber_known_start_datetime
+, sv.prior_subscription_registration_flag
+, sv.prior_paid_subscription_flag
+, sv.prior_registration_flag
+, sv.dw_subscriber_base_date
+, sv.subscriber_count
+, sv.active_subscriber_count
+, sv.subscriber_status_code
+, sv.subscription_source_system_code
+, sv.subscriber_tenure_days
+, sv.subscriber_tenure_cohort_order
+, sv.subscriber_tenure_cohort_group
+, sv.last_month_subscriber_content_segment
+, sv.prior_month_subscriber_content_segment
+, sv.last_known_subscriber_content_segment
+, sv.subscriber_individual_gender
+, sv.subscriber_lifestage_desc
+, sv.subscriber_household_income_desc
+, sv.subscriber_mosaic_type
+, sv.subscriber_mosaic_title
+, sv.subscriber_individual_age
+, sv.subscriber_affluence_desc
+, sv.subscriber_credit_demand
+, sv.subscriber_postcode
+, sv.subscriber_last_28_days_active_days
+, sv.subscriber_last_28_days_visit_count
+, sv.subscriber_last_28_days_page_view_count
+, sv.subscriber_last_28_days_article_view_count
+, sv.subscriber_engagement_pv_cohort_order
+, sv.subscriber_engagement_pv_cohort_group
+, sv.combined_top_5_site_section_last_28_days
+, sv.combined_site_section_last_28_days_page_view_count
+, sv.combined_top_5_source_code_last_28_days
+, sv.combined_source_code_last_28_days_page_view_count
+, sv.combined_top_5_device_type_last_28_days
+, sv.combined_device_type_last_28_days_page_view_count
+, sv.subscriber_highest_shap_mapped
+, sv.subscriber_highest_churn_score
+, sv.subscriber_highest_churn_score_group
+, sv.subscriber_highest_churn_score_group_order
+, array_to_string(array_agg(distinct sv.subscription_status_code order by sv.subscription_status_code),', ') as combined_subscription_status_code
+, array_to_string(array_agg(distinct sv.dw_publication_id order by sv.dw_publication_id),', ') as combined_dw_publication_id
+, array_to_string(array_agg(distinct sv.dw_rate_plan_id order by sv.dw_rate_plan_id),', ') as combined_dw_rate_plan_id
+, array_to_string(array_agg(distinct sv.is_paying_flag order by sv.is_paying_flag),', ') as combined_is_paying_flag
+, array_to_string(array_agg(distinct sv.customer_type order by sv.customer_type),', ') as combined_customer_type
+, array_to_string(array_agg(distinct sv.highest_shap_mapped order by sv.highest_shap_mapped),', ') as combined_highest_shap_mapped
+, array_to_string(array_agg(distinct cast(sv.churn_score_group_order as string) order by cast(sv.churn_score_group_order as string)),', ') as combined_churn_score_group_order
+, array_to_string(array_agg(distinct sv.churn_score_group order by sv.churn_score_group),', ') as combined_churn_score_group
+, array_to_string(array_agg(distinct sv.masthead order by sv.masthead),', ') as combined_masthead
+, array_to_string(array_agg(distinct sv.masthead_long_name order by sv.masthead_long_name),', ') as combined_masthead_long_name
+, array_to_string(array_agg(distinct sv.rate_plan_code order by sv.rate_plan_code),', ') as combined_rate_plan_code
+, array_to_string(array_agg(distinct sv.rate_plan_description order by sv.rate_plan_description),', ') as combined_rate_plan_description
+, array_to_string(array_agg(distinct sv.offer_category_name order by sv.offer_category_name),', ') as combined_offer_category_name
+, array_to_string(array_agg(distinct sv.offer_category_group_name order by sv.offer_category_group_name),', ') as combined_offer_category_group_name
+, array_to_string(array_agg(distinct sv.frontbook_backbook_group_name order by sv.frontbook_backbook_group_name),', ') as combined_frontbook_backbook_group_name
+, array_to_string(array_agg(distinct sv.delivery_medium_type order by sv.delivery_medium_type),', ') as combined_delivery_medium_type
+, array_to_string(array_agg(distinct sv.delivery_schedule_group order by sv.delivery_schedule_group),', ') as combined_delivery_schedule_group
+, array_to_string(array_agg(distinct sv.delivery_schedule_days order by sv.delivery_schedule_days),', ') as combined_delivery_schedule_days
+, array_to_string(array_agg(distinct sv.classification_level_1 order by sv.classification_level_1),', ') as combined_classification_level_1
+, array_to_string(array_agg(distinct sv.classification_level_2 order by sv.classification_level_2),', ') as combined_classification_level_2
+, array_to_string(array_agg(distinct sv.contract_offer_code_description order by sv.contract_offer_code_description),', ') as combined_contract_offer_code_description
+, array_to_string(array_agg(distinct sv.is_corporate_b2b_flag order by sv.is_corporate_b2b_flag),', ') as combined_is_corporate_b2b_flag
+, array_to_string(array_agg(distinct sv.is_bundle order by sv.is_bundle),', ') as combined_is_bundle
+, array_to_string(array_agg(distinct sv.v21_paywall_breach_code order by sv.v21_paywall_breach_code),', ') as combined_v21_paywall_breach_code
+, array_to_string(array_agg(distinct sv.local_publication_name order by sv.local_publication_name),', ') as combined_local_publication_name
+, array_to_string(array_agg(distinct sv.local_brand_name order by sv.local_brand_name),', ') as combined_local_brand_name
+, array_to_string(array_agg(distinct sv.hyper_local_publication_name order by sv.hyper_local_publication_name),', ') as combined_hyper_local_publication_name
+, array_to_string(array_agg(distinct sv.hyper_local_brand_name order by sv.hyper_local_brand_name),', ') as combined_hyper_local_brand_name
+, array_to_string(array_agg(distinct sv.sold_in_rate_plan_code order by sv.sold_in_rate_plan_code),', ') as combined_sold_in_rate_plan_code
+, array_to_string(array_agg(distinct sv.sold_in_source order by sv.sold_in_source),', ') as combined_sold_in_source
+, array_to_string(array_agg(distinct sv.sold_in_source_code order by sv.sold_in_source_code),', ') as combined_sold_in_source_code
+, array_to_string(array_agg(distinct sv.sold_in_source_referrer order by sv.sold_in_source_referrer),', ') as combined_sold_in_source_referrer
+, array_to_string(array_agg(distinct sv.sold_in_source_channel order by sv.sold_in_source_channel),', ') as combined_sold_in_source_channel
+, array_to_string(array_agg(distinct sv.sold_in_channel order by sv.sold_in_channel),', ') as combined_sold_in_channel
+, array_to_string(array_agg(distinct cast(sv.subscription_term_amount as string) order by cast(sv.subscription_term_amount as string)),', ') as combined_subscription_term_amount
+, array_to_string(array_agg(distinct sv.term_period_name order by sv.term_period_name),', ') as combined_term_period_name
+, sum(sv.subscription_count) as subscription_count
+, count(distinct sv.subscription_id_src) as subscription_held_count
+, sum(sv.ratecard_price ) as total_ratecard_price 
+, sum(sv.adjusted_weekly_price ) as total_adjusted_weekly_price 
+, sum(sv.sold_in_payment_amount) as total_sold_in_payment_amount
+, array_agg(struct(sv.subscription_id_src, sv.subscription_status_code, sv.dw_publication_id, sv.dw_rate_plan_id, sv.subscription_count, sv.is_paying_flag, sv.customer_type, sv.dw_effective_start_datetime, sv.dw_effective_end_datetime, sv.subscriber_tenure_days, sv.subscriber_tenure_cohort_order, sv.subscriber_tenure_cohort_group, sv.highest_shap_mapped, sv.churn_score, sv.churn_score_group_order, sv.churn_score_group, sv.masthead, sv.masthead_long_name, sv.rate_plan_code, sv.rate_plan_description, sv.offer_category_name, sv.offer_category_group_name, sv.frontbook_backbook_group_name, sv.delivery_medium_type, sv.delivery_schedule_group, sv.delivery_schedule_days, sv.classification_level_1, sv.classification_level_2, sv.contract_offer_code_description, sv.ratecard_price, sv.adjusted_weekly_price, sv.is_corporate_b2b_flag, sv.is_bundle, sv.v21_paywall_breach_code, sv.local_publication_name, sv.local_brand_name, sv.hyper_local_publication_name, sv.hyper_local_brand_name, sv.sold_in_rate_plan_code, sv.sold_in_payment_amount, sv.sold_in_source, sv.sold_in_source_code, sv.sold_in_source_referrer, sv.sold_in_source_channel, sv.sold_in_channel, sv.subscription_term_amount, sv.term_period_name, sv.subscription_tenure_days
+)) as subscriber_details
+
+from subscriber_base sv
+
+where 1=1 
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48
+
+) lv1
+
+left outer join subscriber_engagement se
+on cast(lv1.subscriber_id_src as string) = cast(se.subscriber_id_src as string)
+and lv1.report_date_name = se.report_date_name
+and lv1.report_date = se.report_date
+and lv1.member_type = se.member_type
+
+where 1=1
+
+)
+
+
+-- Query 
+
+
+select 
+
+squ.*
+
+from subscriber_view squ
+
+where 1=1
+
+;
+
