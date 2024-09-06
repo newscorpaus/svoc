@@ -334,9 +334,9 @@ sf.report_date_name
 , nth_value(coalesce(cd.churn_score_group_order, -1),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score_group_order
 , coalesce(cd.churn_score_group_order, -1) as churn_score_group_order
 , coalesce(cd.churn_score_group, 'Not Available') as  churn_score_group
--- , case when sf.main_customer_type = 'Consumer' then coalesce(seg1.subscriber_content_segment, 'Current Month Acquisition') else sf.main_customer_type end as  last_month_subscriber_content_segment
--- , case when sf.main_customer_type = 'Consumer' then coalesce(seg2.subscriber_content_segment, case when seg1.subscriber_content_segment is null then 'Current Month Acquisition' else 'Last Month Acquistion' end) else sf.main_customer_type end as  prior_month_subscriber_content_segment
--- , case when seg3.subscriber_content_segment in('Cancelled') then coalesce(seg4.subscriber_content_segment, seg3.subscriber_content_segment,'Not Available') else coalesce(seg3.subscriber_content_segment,'Not Available') end as last_known_subscriber_content_segment
+, case when sf.main_customer_type = 'Consumer' then coalesce(seg1.subscriber_content_segment, 'Current Month Acquisition') else sf.main_customer_type end as  last_month_subscriber_content_segment
+, case when sf.main_customer_type = 'Consumer' then coalesce(seg2.subscriber_content_segment, case when seg1.subscriber_content_segment is null then 'Current Month Acquisition' else 'Last Month Acquistion' end) else sf.main_customer_type end as  prior_month_subscriber_content_segment
+, case when seg3.subscriber_content_segment in('Cancelled') then coalesce(seg4.subscriber_content_segment, seg3.subscriber_content_segment,'Not Available') else coalesce(seg3.subscriber_content_segment,'Not Available') end as last_known_subscriber_content_segment
 , sb.masthead
 , coalesce(md.masthead_long_name, 'Not Available') as masthead_long_name
 , sb.rate_plan_code
