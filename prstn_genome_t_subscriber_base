@@ -1,0 +1,456 @@
+/*
+GENO 0034.001.01 - 20240906 Create Subscriber Base Genome PRSTN Tables
+Includes Lapsed Subscribers
+Includes Last Content Segment
+Excludes "Print-only"
+Version Date: 20240906
+*/
+
+declare report_date date default cast(current_date('Australia/Sydney') - 1 as date);
+declare last_week_flag int64 default 1;
+declare last_fy_flag int64 default 1;
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base` 
+
+-- partition by base_date
+
+-- cluster by subscriber_id_src
+
+as
+
+with relative_calendar_dim
+
+as
+
+(
+select 
+
+case when cal.calendar_date = report_date and last_week_flag = 0 and last_fy_flag =0 then 'report_date'
+        when cal.calendar_date = report_date and (last_week_flag = 1 or last_fy_flag = 1) then 'yesterday'
+        when cal.calendar_date = lv1.last_week_end_date then 'last_week_end_date'
+        when cal.calendar_date = lv1.last_day_of_last_fy_year then 'last_day_of_last_fy_year'
+  end as report_date_name
+, cal.calendar_date as base_date
+, date_sub(cal.calendar_date, interval 29 day) as partition_start_date
+, date_add(cal.calendar_date, interval 1 day) as partition_end_date
+, date_sub(cal.calendar_date, interval 27 day) as activity_start_date
+, cal.calendar_date as activity_end_date
+, concat(case when substr(cal.last_month_name,5,2) = '01' then cast(cast(substr(cal.last_month_name,1,4) as numeric) - 1 as string) else substr(cal.last_month_name,1,4) end, case when substr(cal.last_month_name,5,2) = '01' then '12' else trim(cast(cast(substr(cal.last_month_name,5,2) as numeric) - 1 as string format '00')) end ) as prior_month_name
+, cal.last_month_name
+
+from
+(
+select 
+
+cal.calendar_date as report_date
+, case when last_week_flag = 1 then cal.last_week_end_date else report_date end as last_week_end_date
+, case when last_fy_flag = 1 then cal.last_day_of_last_fy_year else report_date end  as last_day_of_last_fy_year
+
+
+from `nau-data-nprod-dataservices.consumer_reference_data.t_calendar_dim` cal
+
+where 1=1
+and calendar_date = report_date
+) lv1 
+
+inner join `nau-data-nprod-dataservices.consumer_reference_data.t_calendar_dim` cal
+on (lv1.report_date = cal.calendar_date or lv1.last_week_end_date = cal.calendar_date or lv1.last_day_of_last_fy_year = cal.calendar_date)
+
+where 1=1
+
+)
+,
+
+subscriber_fct
+
+as
+
+(
+select 
+
+rcd.report_date_name
+, rcd.base_date as report_date
+, lv1.*
+, date_diff(case when lv1.dw_subscriber_end_datetime > rcd.base_date then rcd.base_date else lv1.dw_subscriber_end_datetime end, lv1.subscriber_tenure_partition_start_date, day) as subscriber_tenure_days
+, row_number() over(partition by rcd.report_date_name, rcd.base_date, lv1.member_type, lv1.subscriber_tenure_order, lv1.subscriber_id_src order by lv1.subscription_id_src) as subscriber_record_order
+, case when string_agg(lv1.customer_type) over(partition by rcd.report_date_name, rcd.base_date, lv1.member_type, lv1.subscriber_tenure_order, lv1.subscriber_id_src) like '%Consumer%'  then 'Consumer'
+        when string_agg(lv1.customer_type) over(partition by rcd.report_date_name, rcd.base_date, lv1.member_type, lv1.subscriber_tenure_order, lv1.subscriber_id_src) like '%Campus%'  then 'Campus'
+        when string_agg(lv1.customer_type) over(partition by rcd.report_date_name, rcd.base_date, lv1.member_type, lv1.subscriber_tenure_order, lv1.subscriber_id_src) like '%Corporate%'  then 'Corporate'
+ end as main_customer_type
+
+from
+(
+select
+
+suf.*
+, min(cast(suf.dw_subscriber_start_datetime as date)) over(partition by suf.member_type, suf.subscriber_id_src, suf.subscriber_tenure_order) as subscriber_tenure_partition_start_date
+, min(suf.dw_subscriber_start_datetime ) over(partition by suf.subscriber_id_src) as subscriber_known_from_date
+
+
+
+from `nau-data-nprod-dataservices.bdm_genome.t_subscriber_base_fct_staging` suf
+
+) lv1 
+
+inner join relative_calendar_dim rcd
+on rcd.base_date between lv1.dw_subscriber_start_datetime and lv1.dw_subscriber_end_datetime
+
+where 1=1
+
+)
+, 
+
+churn_data
+
+as
+
+(
+select 
+
+chu.*
+, case when chu.highest_shap_mapped = 'shap_recency' then 'Recency'
+        when chu.highest_shap_mapped = 'shap_articleviews_30' then 'Article Views last 30 Days'
+        when chu.highest_shap_mapped = 'Breadth' then 'Breadth'
+        when chu.highest_shap_mapped = 'Depth' then 'Depth'
+        when chu.highest_shap_mapped = 'shap_num_previous_subs' then 'Number of Previous Subs'
+        when chu.highest_shap_mapped = 'shap_frequency' then 'Frequency'
+        else 'Not Available'
+        end as clean_highest_shap_mapped
+
+from `nau-data-nprod-dataservices.consumer_reference_data.t_latest_subscription_churn_score` chu
+
+where 1=1
+
+)
+, 
+
+subscription_base
+
+as
+
+(
+select 
+
+sb.*
+, row_number() over(partition by sb.subscriber_id_src order by sb.subscription_id_src) as subscriber_record_order
+
+from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_base` sb
+
+where 1=1
+and sb.dw_source_system_code = 'THINK'
+
+)
+, 
+
+segmentation
+
+as
+
+(
+select 
+
+lv1.* except (subscriber_content_segment)
+, rcd.last_month_name
+, rcd.prior_month_name
+, case when lv1.subscriber_content_segment ='Remaining' then 'Average Consumer' else lv1.subscriber_content_segment end as subscriber_content_segment
+, case when rcd.last_month_name is not null then 1
+        when rcd.prior_month_name is not null then 1
+        when lv1.segmentation_record_order = 1 then 1 
+        else 0 end as segmentation_filter
+
+from
+
+(
+select 
+
+seg.*
+, row_number() over(partition by seg.subscriber_id_src order by cast(seg.year_month_number as int64) desc) as segmentation_record_order
+
+from `nau-data-nprod-dataservices.consumer_segmentation.t_seg_subscriber_segmentation_hist` seg
+
+where 1=1
+
+) lv1
+
+left outer join relative_calendar_dim rcd
+on (cast(rcd.last_month_name as string) = cast(lv1.year_month_number as string)
+    or
+    cast(rcd.prior_month_name as string) = cast(lv1.year_month_number as string))
+
+where 1=1
+and case when rcd.last_month_name is not null then 1
+        when rcd.prior_month_name is not null then 1
+        when lv1.segmentation_record_order = 1 then 1 
+        when lv1.segmentation_record_order = 2 then 1 
+        else 0 end = 1
+)
+,
+
+subscriber_engagement
+
+as
+
+(
+select 
+
+ces.report_date_name
+, ces.report_date
+, ces.subscriber_id_src
+, ces.member_type
+, ces.subscriber_last_28_days_active_days
+, ces.subscriber_last_28_days_visit_count
+, ces.subscriber_last_28_days_page_view_count
+, ces.subscriber_last_28_days_article_view_count
+, ces.combined_top_5_site_section_last_28_days
+, ces.combined_site_section_last_28_days_page_view_count
+, ces.subscriber_top_5_site_section_details
+, ces.combined_top_5_source_code_last_28_days
+, ces.combined_source_code_last_28_days_page_view_count
+, ces.subscriber_top_5_source_code_details
+, ces.combined_top_5_device_type_last_28_days
+, ces.combined_device_type_last_28_days_page_view_count
+, ces.subscriber_top_5_device_type_details
+
+from `nau-data-nprod-dataservices.prstn_genome.t_subscriber_consumption_events_staging`  ces
+
+where 1=1
+
+)
+, 
+
+subscriber_demographics
+
+as
+
+(
+select 
+
+sd.*
+
+from `nau-data-nprod-dataservices.prstn_genome.t_subscriber_demographics` sd
+
+where 1=1
+
+)
+, 
+
+masthead_dim
+
+as
+
+(
+select 
+
+md.*
+
+from `nau-data-nprod-dataservices.reference_data_genome.t_masthead_dim` md
+
+where 1=1
+
+)
+
+, 
+
+subscriber_base_txfm_1
+
+as 
+
+(
+select 
+
+sf.report_date_name
+, sf.report_date
+, sf.member_type
+, sf.dw_subscriber_party_id
+, sf.subscriber_id_src
+, sf.subscriber_tenure_order
+, sf.dw_subscriber_start_datetime
+, sf.dw_subscriber_end_datetime
+, sb.subscriber_tenure_start_datetime as subscriber_known_start_datetime
+, sf.prior_subscription_registration_flag
+, sf.prior_paid_subscription_flag
+, sf.prior_registration_flag
+, sf.dw_subscriber_base_date
+, sf.subscriber_count
+, sf.active_subscriber_count
+, sf.subscriber_status_code
+, sf.subscription_source_system_code
+, sf.dw_subscription_id
+, sf.subscription_id_src
+, sf.subscription_status_code
+, sf.dw_publication_id
+, sf.dw_rate_plan_id
+, sf.subscription_count
+, sf.is_paying_flag
+, sf.customer_type
+, sf.dw_effective_start_datetime
+, sf.dw_effective_end_datetime
+, sf.subscriber_tenure_days
+, case 
+    when sf.subscriber_tenure_days between 0 and 30 then 1
+    when sf.subscriber_tenure_days between 31 and 365 then 2
+    when sf.subscriber_tenure_days between 366 and 730 then 3
+    when sf.subscriber_tenure_days >= 731 then 4   
+    end as subscriber_tenure_cohort_order
+, case 
+    when sf.subscriber_tenure_days between 0 and 30 then '1 Month'
+    when sf.subscriber_tenure_days between 31 and 365 then 'Between 2 & 12 Months'
+    when sf.subscriber_tenure_days between 366 and 730 then 'Between 13 & 24 Months'
+    when sf.subscriber_tenure_days >= 731 then 'More than 2 Years'  
+    end as subscriber_tenure_cohort_group
+, coalesce(cd.clean_highest_shap_mapped, 'Not Available') as highest_shap_mapped
+, coalesce(cd.churn_score, -1) as churn_score
+, nth_value(coalesce(cd.clean_highest_shap_mapped, 'Not Available'),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_shap_mapped
+, nth_value(coalesce(cd.churn_score, -1),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score
+, nth_value(coalesce(cd.churn_score_group, 'Not Available'),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score_group
+, nth_value(coalesce(cd.churn_score_group_order, -1),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score_group_order
+, coalesce(cd.churn_score_group_order, -1) as churn_score_group_order
+, coalesce(cd.churn_score_group, 'Not Available') as  churn_score_group
+, case when sf.main_customer_type = 'Consumer' then coalesce(seg1.subscriber_content_segment, 'Current Month Acquisition') else sf.main_customer_type end as  last_month_subscriber_content_segment
+, case when sf.main_customer_type = 'Consumer' then coalesce(seg2.subscriber_content_segment, case when seg1.subscriber_content_segment is null then 'Current Month Acquisition' else 'Last Month Acquistion' end) else sf.main_customer_type end as  prior_month_subscriber_content_segment
+, case when seg3.subscriber_content_segment in('Cancelled') then coalesce(seg4.subscriber_content_segment, seg3.subscriber_content_segment,'Not Available') else coalesce(seg3.subscriber_content_segment,'Not Available') end as last_known_subscriber_content_segment
+, sb.masthead
+, coalesce(md.masthead_long_name, 'Not Available') as masthead_long_name
+, sb.rate_plan_code
+, sb.rate_plan_description
+, sb.offer_category_name
+, sb.offer_category_group_name
+, sb.frontbook_backbook_group_name
+, sb.delivery_medium_type
+, sb.delivery_schedule_group
+, sb.delivery_schedule_days
+, sb.classification_level_1
+, sb.classification_level_2
+, sb.contract_offer_code_description
+, sb.ratecard_price
+, sb.adjusted_weekly_price
+, sb.is_corporate_b2b_flag
+, sb.is_bundle
+, sb.v21_paywall_breach_code
+, sb.local_publication_name
+, sb.local_brand_name
+, sb.hyper_local_publication_name
+, sb.hyper_local_brand_name
+, sb.sold_in_rate_plan_code
+, sb.sold_in_payment_amount
+, sb.sold_in_source
+, sb.sold_in_source_code
+, case when sb.sold_in_source_referrer = 'Not Available' then 'Direct' else sb.sold_in_source_referrer end as sold_in_source_referrer
+, sb.sold_in_source_channel
+, sb.sold_in_channel
+, sb.subscription_term_amount
+, sb.term_period_name
+, sb.subscription_tenure_days
+, coalesce(sd.individual_gender, 'Not Available') as subscriber_individual_gender
+, coalesce(sd.lifestage_desc, 'Not Available') as subscriber_lifestage_desc
+, coalesce(sd.household_income_desc, 'Not Available') as subscriber_household_income_desc
+, coalesce(sd.mosaic_type, 'Not Available') as subscriber_mosaic_type
+, coalesce(sd.mosaic_title, 'Not Available') as subscriber_mosaic_title
+, coalesce(sd.individual_age, 'Not Available') as subscriber_individual_age
+, coalesce(sd.affluence_desc, 'Not Available') as subscriber_affluence_desc
+, coalesce(sd.credit_demand, 'Not Available') as subscriber_credit_demand
+, sb.subscriber_zip as subscriber_postcode
+, se.subscriber_last_28_days_active_days
+, se.subscriber_last_28_days_visit_count
+, se.subscriber_last_28_days_page_view_count
+, se.subscriber_last_28_days_article_view_count
+, case 
+    when se.subscriber_last_28_days_page_view_count = 0 then 1
+    when se.subscriber_last_28_days_page_view_count between 1 and 50 then 2
+    when se.subscriber_last_28_days_page_view_count between 51 and 150 then 3
+    when se.subscriber_last_28_days_page_view_count >= 151 then 4   
+    end as subscriber_engagement_pv_cohort_order
+, case 
+    when se.subscriber_last_28_days_page_view_count = 0 then 'Dormant'
+    when se.subscriber_last_28_days_page_view_count between 1 and 50 then 'Between 1 & 50 PV'
+    when se.subscriber_last_28_days_page_view_count between 51 and 150 then 'Between 51 & 150 PV'
+    when se.subscriber_last_28_days_page_view_count >= 151 then 'More than 150 PV'  
+    end as subscriber_engagement_pv_cohort_group
+, se.combined_top_5_site_section_last_28_days
+, se.combined_site_section_last_28_days_page_view_count
+, se.subscriber_top_5_site_section_details
+, se.combined_top_5_source_code_last_28_days
+, se.combined_source_code_last_28_days_page_view_count
+, se.subscriber_top_5_source_code_details
+, se.combined_top_5_device_type_last_28_days
+, se.combined_device_type_last_28_days_page_view_count
+, se.subscriber_top_5_device_type_details
+, count(distinct sf.subscription_id_src) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src) as subscription_held_count
+
+from subscriber_fct sf
+
+left outer join churn_data cd
+on cast(sf.subscription_id_src as string) = cast(cd.subscription_id as string)
+
+left outer join segmentation seg1
+on cast(sf.subscriber_id_src as string) = cast(seg1.subscriber_id_src as string)
+and cast(seg1.last_month_name as string) = cast(seg1.year_month_number as string)
+
+left outer join segmentation seg2
+on cast(sf.subscriber_id_src as string) = cast(seg2.subscriber_id_src as string)
+and cast(seg2.prior_month_name as string) = cast(seg2.year_month_number as string)
+
+left outer join segmentation seg3
+on cast(sf.subscriber_id_src as string) = cast(seg3.subscriber_id_src as string)
+and seg3.segmentation_record_order  = 1
+
+left outer join segmentation seg4
+on cast(sf.subscriber_id_src as string) = cast(seg4.subscriber_id_src as string)
+and seg4.segmentation_record_order  = 2
+
+inner join subscription_base sb
+on cast(sf.subscription_id_src as string) = cast(sb.subscription_id_src as string)
+and sf.dw_effective_start_datetime = sb.dw_effective_start_datetime
+
+left outer join subscriber_engagement se
+on cast(sf.subscriber_id_src as string) = cast(se.subscriber_id_src as string)
+and sf.report_date_name = se.report_date_name
+and sf.report_date = se.report_date
+and sf.member_type = se.member_type
+
+left outer join subscriber_demographics sd
+on cast(sf.subscriber_id_src as string) = cast(sd.subscriber_id_src as string)
+and sd.subscriber_record_order = 1
+
+left outer join masthead_dim md
+on sb.masthead = md.masthead
+
+where 1=1
+and sb.masthead not in ('SN')
+-- Filter to be applied for member_types here
+-- Filter to be applied for available time periods here
+-- Filtering out "Print-only"
+--and sf.member_type in('subscriber')
+--and sf.report_date_name = 'yesterday'
+
+), 
+
+subscriber_base_txfm_2
+
+as
+
+(
+select
+
+tx1.*
+
+from subscriber_base_txfm_1 tx1
+
+where 1=1
+and tx1.classification_level_2 not in('Print-only')
+
+
+)
+
+-- Query 
+
+
+select 
+
+squ.*
+
+from subscriber_base_txfm_2 squ
+
+where 1=1
+
+;
