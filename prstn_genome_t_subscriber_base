@@ -70,6 +70,8 @@ select
 
 rcd.report_date_name
 , rcd.base_date as report_date
+, rcd.last_month_name
+, rcd.prior_month_name
 , lv1.*
 , date_diff(case when lv1.dw_subscriber_end_datetime > rcd.base_date then rcd.base_date else lv1.dw_subscriber_end_datetime end, lv1.subscriber_tenure_partition_start_date, day) as subscriber_tenure_days
 , row_number() over(partition by rcd.report_date_name, rcd.base_date, lv1.member_type, lv1.subscriber_tenure_order, lv1.subscriber_id_src order by lv1.subscription_id_src) as subscriber_record_order
@@ -150,13 +152,14 @@ as
 select 
 
 lv1.* except (subscriber_content_segment)
-, rcd.last_month_name
-, rcd.prior_month_name
+, rc1.last_month_name
+, rc2.prior_month_name
 , case when lv1.subscriber_content_segment ='Remaining' then 'Average Consumer' else lv1.subscriber_content_segment end as subscriber_content_segment
-, case when rcd.last_month_name is not null then 1
-        when rcd.prior_month_name is not null then 1
+, case when rc1.last_month_name is not null then 1
+        when rc2.prior_month_name is not null then 1
         when lv1.segmentation_record_order = 1 then 1 
-        else 0 end as segmentation_filter
+        when lv1.segmentation_record_order = 2 then 1 
+        else 0 end = 1 as segmentation_filter
 
 from
 
@@ -172,14 +175,39 @@ where 1=1
 
 ) lv1
 
-left outer join relative_calendar_dim rcd
-on (cast(rcd.last_month_name as string) = cast(lv1.year_month_number as string)
-    or
-    cast(rcd.prior_month_name as string) = cast(lv1.year_month_number as string))
+left outer join 
+(
+select
+
+rcd.last_month_name
+
+from relative_calendar_dim rcd
 
 where 1=1
-and case when rcd.last_month_name is not null then 1
-        when rcd.prior_month_name is not null then 1
+
+group by 1
+
+) rc1 
+on cast(rc1.last_month_name as string) = cast(lv1.year_month_number as string)
+
+left outer join 
+(
+select
+
+rcd.prior_month_name
+
+from relative_calendar_dim rcd
+
+where 1=1
+
+group by 1
+
+) rc2
+on cast(rc2.prior_month_name as string) = cast(lv1.year_month_number as string)
+
+where 1=1
+and case when rc1.last_month_name is not null then 1
+        when rc2.prior_month_name is not null then 1
         when lv1.segmentation_record_order = 1 then 1 
         when lv1.segmentation_record_order = 2 then 1 
         else 0 end = 1
@@ -306,9 +334,9 @@ sf.report_date_name
 , nth_value(coalesce(cd.churn_score_group_order, -1),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score_group_order
 , coalesce(cd.churn_score_group_order, -1) as churn_score_group_order
 , coalesce(cd.churn_score_group, 'Not Available') as  churn_score_group
-, case when sf.main_customer_type = 'Consumer' then coalesce(seg1.subscriber_content_segment, 'Current Month Acquisition') else sf.main_customer_type end as  last_month_subscriber_content_segment
-, case when sf.main_customer_type = 'Consumer' then coalesce(seg2.subscriber_content_segment, case when seg1.subscriber_content_segment is null then 'Current Month Acquisition' else 'Last Month Acquistion' end) else sf.main_customer_type end as  prior_month_subscriber_content_segment
-, case when seg3.subscriber_content_segment in('Cancelled') then coalesce(seg4.subscriber_content_segment, seg3.subscriber_content_segment,'Not Available') else coalesce(seg3.subscriber_content_segment,'Not Available') end as last_known_subscriber_content_segment
+-- , case when sf.main_customer_type = 'Consumer' then coalesce(seg1.subscriber_content_segment, 'Current Month Acquisition') else sf.main_customer_type end as  last_month_subscriber_content_segment
+-- , case when sf.main_customer_type = 'Consumer' then coalesce(seg2.subscriber_content_segment, case when seg1.subscriber_content_segment is null then 'Current Month Acquisition' else 'Last Month Acquistion' end) else sf.main_customer_type end as  prior_month_subscriber_content_segment
+-- , case when seg3.subscriber_content_segment in('Cancelled') then coalesce(seg4.subscriber_content_segment, seg3.subscriber_content_segment,'Not Available') else coalesce(seg3.subscriber_content_segment,'Not Available') end as last_known_subscriber_content_segment
 , sb.masthead
 , coalesce(md.masthead_long_name, 'Not Available') as masthead_long_name
 , sb.rate_plan_code
@@ -384,11 +412,11 @@ on cast(sf.subscription_id_src as string) = cast(cd.subscription_id as string)
 
 left outer join segmentation seg1
 on cast(sf.subscriber_id_src as string) = cast(seg1.subscriber_id_src as string)
-and cast(seg1.last_month_name as string) = cast(seg1.year_month_number as string)
+and cast(sf.last_month_name as string) = cast(seg1.last_month_name as string)
 
 left outer join segmentation seg2
 on cast(sf.subscriber_id_src as string) = cast(seg2.subscriber_id_src as string)
-and cast(seg2.prior_month_name as string) = cast(seg2.year_month_number as string)
+and cast(sf.prior_month_name as string) = cast(seg2.prior_month_name as string)
 
 left outer join segmentation seg3
 on cast(sf.subscriber_id_src as string) = cast(seg3.subscriber_id_src as string)
@@ -416,7 +444,6 @@ left outer join masthead_dim md
 on sb.masthead = md.masthead
 
 where 1=1
-and sb.masthead not in ('SN')
 -- Filter to be applied for member_types here
 -- Filter to be applied for available time periods here
 -- Filtering out "Print-only"
@@ -437,13 +464,13 @@ tx1.*
 from subscriber_base_txfm_1 tx1
 
 where 1=1
--- and tx1.classification_level_2 not in('Print-only')
+and tx1.masthead not in ('SN')
+and tx1.classification_level_2 not in('Print-only')
 
 
 )
 
--- Query 
-
+/* Query */
 
 select 
 
@@ -454,3 +481,4 @@ from subscriber_base_txfm_2 squ
 where 1=1
 
 ;
+
