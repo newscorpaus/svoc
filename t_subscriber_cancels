@@ -9,7 +9,7 @@ Version Date: 20240828
 
 declare dashboard_run_date date default date(current_date('Australia/Sydney') - 1);
 
-create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_cancels_test`
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_cancels`
 
 partition by dw_partition_date
 
