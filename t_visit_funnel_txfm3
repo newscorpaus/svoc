@@ -1,0 +1,130 @@
+CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_visit_funnel_txfm3` (proc_end_date date, proc_week_count int64)
+begin
+
+/*
+ENG 0010.004.03 - 20240925 Clickstream Visit Funnel TXFM3
+Second transformation Logic for Adobe Visit based Clickstream Funnel - rolling quarter records
+Version Date: 20240925
+*/
+
+declare report_end_date date default proc_end_date; -- date(current_date('Australia/Sydney') - 1);
+declare report_days_count int64 default (7 * proc_week_count); --(7*13);
+declare report_start_date date default date_sub(report_end_date,interval report_days_count - 1 day);
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_visit_funnel_txfm3`
+
+partition by visit_start_date
+
+as
+
+with visit_aggregation_txfm1
+
+as
+
+(
+select 
+
+tx1.source_code
+, tx1.visit_id
+, tx1.source_visit_id
+, tx1.visit_start_datetime
+, tx1.visit_start_date
+, tx1.visit_end_datetime
+, tx1.visit_end_date
+, tx1.visit_referrer_domain
+, tx1.visit_referrer
+, max(tx1.subscriber_id_src) as subscriber_id_src
+, array_to_string(array_agg(distinct tx1.brand order by tx1.brand),', ') as combined_brand
+, array_to_string(array_agg(distinct tx1.masthead order by tx1.masthead),', ') as combined_masthead
+, array_to_string(array_agg(distinct tx1.section1 order by tx1.section1),', ') as combined_section1
+, array_to_string(array_agg(distinct tx1.section2 order by tx1.section2),', ') as combined_section2
+, array_to_string(array_agg(distinct tx1.section3 order by tx1.section3),', ') as combined_section3
+, array_to_string(array_agg(distinct tx1.page_type order by tx1.page_type),', ') as combined_page_type
+, array_to_string(array_agg(distinct tx1.member_type order by tx1.member_type),', ') as combined_visit_member_type
+, array_to_string(array_agg(distinct tx1.subscriber_visit_member_type order by tx1.subscriber_visit_member_type),', ') as combined_subscriber_visit_member_type
+, array_to_string(array_agg(distinct tx1.subscriber_member_type order by tx1.subscriber_member_type),', ') as combined_subscriber_member_type
+, array_to_string(array_agg(distinct tx1.prior_subscriber_member_type order by tx1.prior_subscriber_member_type),', ') as combined_prior_subscriber_member_type
+, array_to_string(array_agg(distinct tx1.device_type order by tx1.device_type),', ') as combined_device_type
+, array_to_string(array_agg(distinct tx1.source_code_id order by tx1.source_code_id),', ') as combined_source_code_id
+, array_to_string(array_agg(distinct tx1.source_code_group order by tx1.source_code_group),', ') as combined_source_code_group
+
+, case when sum(tx1.breach_view_flag) > 0 then 1 else 0 end as breach_view_flag
+, case when sum(tx1.subscription_signup_start_flag) > 0 then 1 else 0 end as subscription_signup_start_flag
+, case when sum(tx1.subscription_signup_complete_flag) > 0 then 1 else 0 end as subscription_signup_complete_flag
+, case when sum(tx1.direct_shop_front_flag) > 0 then 1 else 0 end as direct_shop_front_flag
+, case when sum(tx1.shopfront_activity_flag) > 0 then 1 else 0 end as shopfront_activity_flag
+, sum(tx1.page_view) as total_page_views
+, sum(tx1.article_view) as total_article_views
+, sum(tx1.seconds_spent) as total_seconds_spent
+, sum(tx1.page_views_with_seconds_spent) as total_page_views_with_seconds_spent
+, count(distinct tx1.section1) as breadth_count
+, sum(tx1.breach_view_flag) as total_breach_views
+, sum(tx1.subscription_signup_start_flag) as total_subscription_signup_start
+, sum(tx1.subscription_signup_complete_flag) as total_subscription_signup_complete
+, sum(tx1.direct_shop_front_flag) as total_direct_shop_front
+
+, sum(tx1.page_view_alt_1) as page_view_alt_1
+, sum(tx1.page_view_alt_2) as page_view_alt_2 
+, sum(tx1.article_view_alt_1) as article_view_alt_1
+, sum(tx1.article_view_alt_2) as article_view_alt_2
+, sum(tx1.article_view_alt_3) as article_view_alt_3 
+
+from `nau-data-nprod-dataservices.prstn_genome.t_visit_funnel_txfm2` tx1
+
+where 1=1
+and cast(tx1.visit_start_date as date) between report_start_date and report_end_date
+
+group by 1,2,3,4,5,6,7,8,9
+)
+, 
+
+visit_aggregation_txfm2
+
+as
+
+(
+select 
+
+tx1.*
+, case when tx1.combined_visit_member_type like '%subscriber%' then 'subscriber'
+        when tx1.combined_visit_member_type like '%premium_registered%' then 'premium_registered'
+        when tx1.combined_visit_member_type like '%registered%' then 'registered'
+        when tx1.combined_visit_member_type like '%anonymous%' then 'anonymous' end as combined_visit_member_group
+, case when tx1.combined_subscriber_visit_member_type like '%subscriber%' then 'subscriber'
+        when tx1.combined_subscriber_visit_member_type like '%premium_registered%' then 'premium_registered'
+        when tx1.combined_subscriber_visit_member_type like '%registered%' then 'registered'
+        when tx1.combined_subscriber_visit_member_type like '%anonymous%' then 'anonymous' end as combined_subscriber_visit_member_group
+, case when tx1.combined_prior_subscriber_member_type like '%subscriber%' then 'subscriber'
+        when tx1.combined_prior_subscriber_member_type like '%premium_registered%' then 'premium_registered'
+        when tx1.combined_prior_subscriber_member_type like '%registered%' then 'registered'
+        when tx1.combined_prior_subscriber_member_type like '%anonymous%' then 'anonymous' end as combined_prior_subscriber_member_group
+, case when regexp_contains(tx1.combined_device_type, 'Tablet') then 'Tablet'
+        when regexp_contains(tx1.combined_device_type, 'Mobile') then 'Mobile'
+        when regexp_contains(tx1.combined_device_type, 'Desktop') then 'Desktop'
+        else 'Desktop'
+        end as visit_device_type
+
+from visit_aggregation_txfm1 tx1
+
+where 1=1
+
+)
+
+-- Query 
+
+
+select 
+
+squ.*
+
+from 
+
+visit_aggregation_txfm2
+
+squ
+
+where 1=1
+
+;
+
+end
