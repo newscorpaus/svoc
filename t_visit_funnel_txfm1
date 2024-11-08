@@ -1,0 +1,568 @@
+CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_visit_funnel_txfm1` (proc_end_date date, proc_week_count int64)
+begin
+
+/*
+ENG 0010.002.03 - 20240925 Clickstream Visit Funnel TXFM1
+First transformation Logic for Adobe Visit based Clickstream Funnel - rolling quarter records
+Version Date: 20240925
+*/
+
+declare report_end_date date default proc_end_date; -- date(current_date('Australia/Sydney') - 1);
+declare report_days_count int64 default (7 * proc_week_count); --(7*13);
+declare report_start_date date default date_sub(report_end_date,interval report_days_count - 1 day);
+
+declare partition_dates array<date> default 
+
+(
+
+select 
+
+array_agg(lv1.partition_dates) as partition_dates
+
+from
+(
+select 
+
+partition_dates
+
+from unnest(generate_date_array(date_sub(report_start_date, interval 3 day),date_add(report_end_date, interval 2 day), interval 1 day)) as partition_dates
+
+group by 1
+
+) lv1
+
+where 1=1
+
+)
+;
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_visit_funnel_txfm1`
+
+partition by visit_start_date
+
+cluster by visit_start_datetime, visit_referrer, source_code_id
+
+as
+
+with relative_calendar_dim
+
+as
+
+(
+select 
+
+cal.calendar_date as report_date
+, report_start_date - 1 as activity_start_date
+, report_end_date as activity_end_date
+, row_number() over(partition by 1 order by cal.calendar_date asc) as calendar_record_order
+
+from `nau-data-nprod-dataservices.consumer_reference_data.t_calendar_dim` cal
+
+where 1=1
+and cast(cal.calendar_date as date) between report_start_date - 1 and report_end_date
+
+group by 1
+
+)
+, 
+
+clickstream_web
+
+as
+
+(
+select  
+
+'adobe_web' as source_code
+, coalesce(wci.post_prop12, post_evar12) as subscriber_id_src
+, concat(safe_cast(wci.post_visid_high AS string),safe_cast(wci.post_visid_low AS string),safe_cast(wci.visit_num AS string)) as visit_id
+, case when wci.post_pagename is not null then 1 else 0 end as page_view
+, case when wci.post_page_event = 0 and not (post_event_list LIKE '%,202,%' or post_event_list LIKE '%202,%' or post_event_list LIKE '%,202%') then 1 else 0 end as page_view_alt_1
+, case when wci.post_page_event = 0 and not (event_list LIKE '%,202,%' or event_list LIKE '%202,%' or event_list LIKE '%,202%') then 1 else 0 end as page_view_alt_2
+
+, case when wci.post_prop16 is not null then 1 else 0 end as article_view
+, case when wci.post_prop16 is not null then 1 else 0 end as article_view_alt_1
+, case when wci.post_pagename is not null and lower(coalesce(wci.post_prop9, wci.post_evar9)) like '%story%' and lower(coalesce(wci.post_prop9, wci.post_evar9)) not like '%galler%' then 1 else 0 end as article_view_alt_2
+, case when coalesce(wci.post_prop16,wci.post_evar16) is not null and wci.post_page_event = 0
+       and (coalesce(wci.post_prop9, wci.post_evar9) like '%story%' or coalesce(wci.post_prop9, wci.post_evar9) like '%article%' or coalesce(wci.post_prop9, wci.post_evar9) like '%blogs%')
+       then 1
+       when (coalesce(wci.post_prop9, wci.post_evar9) like '%gallery%') -- and content_engagement_source_code = 'ADOBE CLICKSTREAM WEB' needs to be changed for Adobe App
+       then 1
+       else 0
+  end as article_view_alt_3
+, date(datetime(wci.date_time,"Australia/Sydney")) as au_activity_date
+, datetime(wci.date_time,"Australia/Sydney") as au_activity_datetime
+, case when wci.post_event_list like '%,202,%' or wci.post_event_list like '%202,%' or wci.post_event_list like '%,202%' then 1 else 0 end as breach_view_flag
+, case when wci.post_event_list like '%,218,%' or wci.post_event_list like '%218,%' or wci.post_event_list like '%,218%' then 1 else 0 end as subscription_signup_start_flag
+, case when wci.post_event_list like '%,215,%' or wci.post_event_list like '%215,%' or wci.post_event_list like '%,215%' then 1 else 0 end as subscription_signup_complete_flag
+, case when wci.post_event_list like '%,209,%' or wci.post_event_list like '%209,%' or wci.post_event_list like '%,209%' then 1 else 0 end as direct_shop_front_flag
+, wci.ref_domain 
+, wci.referrer 
+, wci.post_pagename
+, wci.post_page_event
+, wci.post_event_list
+, coalesce(wci.post_prop16,wci.post_evar16) as article_id
+, case when (event_list like '%,202,%' or event_list like '%=202,%' or event_list like '%,202')
+          and length(post_evar81) = 32
+          and post_evar81 is not null
+      then post_evar81
+      when (coalesce(wci.post_prop9, wci.post_evar9) like '%story%' or coalesce(wci.post_prop9, wci.post_evar9) like '%article%' or coalesce(wci.post_prop9, wci.post_evar9) like '%blogs%')
+      then coalesce(post_prop16,post_evar16)
+      when coalesce(wci.post_prop9, wci.post_evar9) like '%gallery%'
+        and evar34 is not null
+        and evar34 like '%/image-gallery/%'
+      then array_reverse(split(split(evar34,'?')[safe_ordinal(1)],'/'))[safe_ordinal(1)]
+  end as  article_id_alt_1
+, case when coalesce(wci.post_prop14, wci.post_evar14,'-1') not in('registered','subscriber') 
+            then 'anonymous'
+        else coalesce(wci.post_prop14, wci.post_evar14) end as member_type
+, coalesce(wci.post_prop2, wci.post_evar2) as brand
+, coalesce(wci.post_prop4, wci.post_evar4) as section1
+, coalesce(wci.post_prop5, wci.post_evar5) as section2
+, coalesce(wci.post_prop6, wci.post_evar6) as section3
+, coalesce(wci.post_prop9, wci.post_evar9) as page_type
+, coalesce(wci.post_prop10, wci.post_evar34) as page_url
+, coalesce(wci.post_prop13, wci.post_evar13) as source_code_id
+, wci.post_campaign
+, wci.post_evar46 as logged_in_status
+, coalesce(wci.post_prop59, wci.post_evar59) as dark_social_facebook
+, coalesce(wci.post_prop74, wci.post_evar74) as dark_social_instagram
+, case when post_prop15 is null then 'free' else post_prop15 end as content_restriction_type
+, case when regexp_contains(wci.user_agent, '(Tablet|tablet|iPad)') = true
+      then 'Tablet'
+            when regexp_contains(wci.user_agent, '(Mobile|iP(hone|od)|Android|BlackBerry|IEMobile|Kindle|NetFront|Silk-Accelerated|(hpw|web)OS|Fennec|Minimo|Opera M(obi|ini)|Blazer|Dolfin|Dolphin|Skyfire|Zune)') = true
+      then 'Mobile'
+            when regexp_contains(wci.user_agent, '(Mobile|iP(hone|od|ad)|Android|BlackBerry|IEMobile|Kindle|NetFront|Silk-Accelerated|(hpw|web)OS|Fennec|Minimo|Opera M(obi|ini)|Blazer|Dolfin|Dolphin|Skyfire|Zune)') = false
+      then 'Desktop'
+            else 'Not Available'
+        end as device_type
+, wci.evar11 as newskey
+
+from `ncau-data-newsquery-prd.sdm_adobe_web.clickstream_ingest` wci
+
+inner join relative_calendar_dim rcd
+on date(datetime(wci.date_time,"Australia/Sydney")) between rcd.activity_start_date and rcd.activity_end_date
+and rcd.calendar_record_order = 1
+
+where 1=1
+and cast(wci.DatePartitioned as date) in unnest(partition_dates)
+and wci.hit_source not in (5,8,9)
+and wci.post_visid_high is not null
+and wci.post_visid_low is not null
+and wci.visit_num is not null
+and wci.visit_page_num is not null
+and cast(wci.exclude_hit as int64) = 0
+
+)
+, 
+
+clickstream_app
+
+as
+
+(
+select  
+
+'adobe_app' as source_code
+, coalesce(aci.post_prop12, post_evar12) as subscriber_id_src
+, concat(safe_cast(aci.post_visid_high AS string),safe_cast(aci.post_visid_low AS string),safe_cast(aci.visit_num AS string)) as visit_id
+, case when aci.post_pagename is not null then 1 else 0 end as page_view
+, case when aci.post_page_event = 0 and not (post_event_list LIKE '%,202,%' or post_event_list LIKE '%202,%' or post_event_list LIKE '%,202%') then 1 else 0 end as page_view_alt_1
+, case when aci.post_page_event = 0 and not (event_list LIKE '%,202,%' or event_list LIKE '%202,%' or event_list LIKE '%,202%') then 1 else 0 end as page_view_alt_2
+
+, case when aci.post_prop16 is not null then 1 else 0 end as article_view
+, case when aci.post_prop16 is not null then 1 else 0 end as article_view_alt_1
+, case when aci.post_pagename is not null and lower(coalesce(aci.post_prop9, aci.post_evar9)) like '%story%' and lower(coalesce(aci.post_prop9, aci.post_evar9)) not like '%galler%' then 1 else 0 end as article_view_alt_2
+, case when coalesce(aci.post_prop16,aci.post_evar16) is not null and aci.post_page_event = 0
+       and (coalesce(aci.post_prop9, aci.post_evar9) like '%story%' or coalesce(aci.post_prop9, aci.post_evar9) like '%article%' or coalesce(aci.post_prop9, aci.post_evar9) like '%blogs%')
+       then 1
+       when (coalesce(aci.post_prop9, aci.post_evar9) like '%gallery%') -- and content_engagement_source_code = 'ADOBE CLICKSTREAM WEB' needs to be changed for Adobe App
+       then 1
+       else 0
+  end as article_view_alt_3
+, date(datetime(aci.date_time,"Australia/Sydney")) as au_activity_date
+, datetime(aci.date_time,"Australia/Sydney") as au_activity_datetime
+, case when aci.post_event_list like '%,202,%' or aci.post_event_list like '%202,%' or aci.post_event_list like '%,202%' then 1 else 0 end as breach_view_flag
+, case when aci.post_event_list like '%,218,%' or aci.post_event_list like '%218,%' or aci.post_event_list like '%,218%' then 1 else 0 end as subscription_signup_start_flag
+, case when aci.post_event_list like '%,215,%' or aci.post_event_list like '%215,%' or aci.post_event_list like '%,215%' then 1 else 0 end as subscription_signup_complete_flag
+, case when aci.post_event_list like '%,209,%' or aci.post_event_list like '%209,%' or aci.post_event_list like '%,209%' then 1 else 0 end as direct_shop_front_flag
+, aci.ref_domain 
+, aci.referrer 
+, aci.post_pagename
+, aci.post_page_event
+, aci.post_event_list
+, coalesce(aci.post_prop16,aci.post_evar16) as article_id
+, coalesce(aci.post_prop16,aci.post_evar16) as article_id_alt_1
+, case when post_prop14 is null
+      then case when post_prop15 = 'premium' then 'subscriber' else 'anonymous' end
+      else case when aci.post_prop14 = 'registered' then 'registered'
+                when aci.post_prop14 = 'subscriber' then 'subscriber'
+                else 'anonymous' 
+           end 
+       end as member_type
+, coalesce(aci.post_prop2, aci.post_evar2) as brand
+, coalesce(aci.post_prop4, aci.post_evar4) as section1
+, coalesce(aci.post_prop5, aci.post_evar5) as section2
+, coalesce(aci.post_prop6, aci.post_evar6) as section3
+, coalesce(aci.post_prop9, aci.post_evar9) as page_type
+, coalesce(aci.post_prop10, aci.post_evar34) as page_url
+, coalesce(aci.post_prop13, aci.post_evar13) as source_code_id
+, aci.post_campaign
+, aci.post_evar46 as logged_in_status
+, coalesce(aci.post_prop59, aci.post_evar59) as dark_social_facebook
+, coalesce(aci.post_prop74, aci.post_evar74) as dark_social_instagram
+, case when aci.post_prop15= 'premium' then 'restricted'
+              else 'free'
+              end as content_restriction_type
+, case when regexp_contains(aci.user_agent, '(Tablet|tablet|iPad)') = true
+      then 'Tablet'
+            when regexp_contains(aci.user_agent, '(Mobile|iP(hone|od)|Android|BlackBerry|IEMobile|Kindle|NetFront|Silk-Accelerated|(hpw|web)OS|Fennec|Minimo|Opera M(obi|ini)|Blazer|Dolfin|Dolphin|Skyfire|Zune)') = true
+      then 'Mobile'
+            when regexp_contains(aci.user_agent, '(Mobile|iP(hone|od|ad)|Android|BlackBerry|IEMobile|Kindle|NetFront|Silk-Accelerated|(hpw|web)OS|Fennec|Minimo|Opera M(obi|ini)|Blazer|Dolfin|Dolphin|Skyfire|Zune)') = false
+      then 'Desktop'
+            else 'Not Available'
+        end as device_type
+, aci.evar11 as newskey
+
+from `ncau-data-newsquery-prd.sdm_adobe_app.clickstream_ingest` aci
+
+inner join relative_calendar_dim rcd
+on date(datetime(aci.date_time,"Australia/Sydney")) between rcd.activity_start_date and rcd.activity_end_date
+and rcd.calendar_record_order = 1
+
+where 1=1
+and cast(aci.DatePartitioned as date) in unnest(partition_dates)
+and aci.hit_source not in (5,8,9)
+and aci.post_visid_high is not null
+and aci.post_visid_low is not null
+and aci.visit_num is not null
+and aci.visit_page_num is not null
+and cast(aci.exclude_hit as int64) = 0
+
+)
+, 
+
+clickstream_amp
+
+as
+
+(
+select  
+
+'adobe_amp' as source_code
+, coalesce(ami.post_prop12, post_evar12) as subscriber_id_src
+, concat(safe_cast(ami.post_visid_high AS string),safe_cast(ami.post_visid_low AS string),safe_cast(ami.visit_num AS string)) as visit_id
+, case when ami.post_pagename is not null then 1 else 0 end as page_view
+, case when ami.post_page_event = 0 and not (post_event_list LIKE '%,202,%' or post_event_list LIKE '%202,%' or post_event_list LIKE '%,202%') then 1 else 0 end as page_view_alt_1
+, case when ami.post_page_event = 0 and not (event_list LIKE '%,202,%' or event_list LIKE '%202,%' or event_list LIKE '%,202%') then 1 else 0 end as page_view_alt_2
+
+, case when ami.post_prop16 is not null then 1 else 0 end as article_view
+, case when ami.post_prop16 is not null then 1 else 0 end as article_view_alt_1
+, case when ami.post_pagename is not null and lower(coalesce(ami.post_prop9, ami.post_evar9)) like '%story%' and lower(coalesce(ami.post_prop9, ami.post_evar9)) not like '%galler%' then 1 else 0 end as article_view_alt_2
+, case when coalesce(ami.post_prop16,ami.post_evar16) is not null and ami.post_page_event = 0
+       and (coalesce(ami.post_prop9, ami.post_evar9) like '%story%' or coalesce(ami.post_prop9, ami.post_evar9) like '%article%' or coalesce(ami.post_prop9, ami.post_evar9) like '%blogs%')
+       then 1
+       when (coalesce(ami.post_prop9, ami.post_evar9) like '%gallery%') -- and content_engagement_source_code = 'ADOBE CLICKSTREAM WEB' needs to be changed for Adobe App
+       then 1
+       else 0
+  end as article_view_alt_3
+, date(datetime(ami.date_time,"Australia/Sydney")) as au_activity_date
+, datetime(ami.date_time,"Australia/Sydney") as au_activity_datetime
+, case when ami.post_event_list like '%,202,%' or ami.post_event_list like '%202,%' or ami.post_event_list like '%,202%' then 1 else 0 end as breach_view_flag
+, case when ami.post_event_list like '%,218,%' or ami.post_event_list like '%218,%' or ami.post_event_list like '%,218%' then 1 else 0 end as subscription_signup_start_flag
+, case when ami.post_event_list like '%,215,%' or ami.post_event_list like '%215,%' or ami.post_event_list like '%,215%' then 1 else 0 end as subscription_signup_complete_flag
+, case when ami.post_event_list like '%,209,%' or ami.post_event_list like '%209,%' or ami.post_event_list like '%,209%' then 1 else 0 end as direct_shop_front_flag
+, ami.ref_domain 
+, ami.referrer 
+, ami.post_pagename
+, ami.post_page_event
+, ami.post_event_list
+, coalesce(ami.post_prop16,ami.post_evar16) as article_id
+, case when (event_list like '%,202,%' or event_list like '%=202,%' or event_list like '%,202')
+          and length(post_evar81) = 32
+          and post_evar81 is not null
+      then post_evar81
+      when (coalesce(ami.post_prop9, ami.post_evar9) like '%story%' or coalesce(ami.post_prop9, ami.post_evar9) like '%article%' or coalesce(ami.post_prop9, ami.post_evar9) like '%blogs%')
+      then coalesce(post_prop16,post_evar16)
+      when coalesce(ami.post_prop9, ami.post_evar9) like '%gallery%'
+        and evar34 is not null
+        and evar34 like '%/image-gallery/%'
+      then array_reverse(split(split(evar34,'?')[safe_ordinal(1)],'/'))[safe_ordinal(1)]
+  end as  article_id_alt_1
+, case when coalesce(ami.post_prop14, ami.post_evar14,'-1') not in('registered','subscriber') 
+            then 'anonymous'
+        else coalesce(ami.post_prop14, ami.post_evar14) end as member_type
+, coalesce(ami.post_prop2, ami.post_evar2) as brand
+, coalesce(ami.post_prop4, ami.post_evar4) as section1
+, coalesce(ami.post_prop5, ami.post_evar5) as section2
+, coalesce(ami.post_prop6, ami.post_evar6) as section3
+, coalesce(ami.post_prop9, ami.post_evar9) as page_type
+, coalesce(ami.post_prop10, ami.post_evar34) as page_url
+, coalesce(ami.post_prop13, ami.post_evar13) as source_code_id
+, ami.post_campaign
+, ami.post_evar46 as logged_in_status
+, coalesce(ami.post_prop59, ami.post_evar59) as dark_social_facebook
+, coalesce(ami.post_prop74, ami.post_evar74) as dark_social_instagram
+, case when post_prop15 is null then 'free' else post_prop15 end as content_restriction_type
+, case when regexp_contains(ami.user_agent, '(Tablet|tablet|iPad)') = true
+      then 'Tablet'
+            when regexp_contains(ami.user_agent, '(Mobile|iP(hone|od)|Android|BlackBerry|IEMobile|Kindle|NetFront|Silk-Accelerated|(hpw|web)OS|Fennec|Minimo|Opera M(obi|ini)|Blazer|Dolfin|Dolphin|Skyfire|Zune)') = true
+      then 'Mobile'
+            when regexp_contains(ami.user_agent, '(Mobile|iP(hone|od|ad)|Android|BlackBerry|IEMobile|Kindle|NetFront|Silk-Accelerated|(hpw|web)OS|Fennec|Minimo|Opera M(obi|ini)|Blazer|Dolfin|Dolphin|Skyfire|Zune)') = false
+      then 'Desktop'
+            else 'Not Available'
+        end as device_type
+, ami.evar11 as newskey
+
+from `ncau-data-newsquery-prd.sdm_adobe_amp.clickstream_ingest` ami
+
+inner join relative_calendar_dim rcd
+on date(datetime(ami.date_time,"Australia/Sydney")) between rcd.activity_start_date and rcd.activity_end_date
+and rcd.calendar_record_order = 1
+
+where 1=1
+and cast(ami.DatePartitioned as date) in unnest(partition_dates)
+and ami.hit_source not in (5,8,9)
+and ami.post_visid_high is not null
+and ami.post_visid_low is not null
+and ami.visit_num is not null
+and ami.visit_page_num is not null
+and cast(ami.exclude_hit as int64) = 0
+
+)
+, 
+
+consumer_engagement
+
+as
+
+(
+select  
+
+web.source_code
+, web.subscriber_id_src
+, web.visit_id
+, concat(web.source_code,'|',web.visit_id) as source_visit_id
+, web.page_view
+, web.page_view_alt_1
+, web.page_view_alt_2
+, web.article_view
+, web.article_view_alt_1
+, web.article_view_alt_2
+, web.article_view_alt_3
+, web.au_activity_date
+, web.au_activity_datetime
+, web.breach_view_flag
+, web.subscription_signup_start_flag
+, web.subscription_signup_complete_flag
+, web.direct_shop_front_flag
+, web.ref_domain
+, web.referrer
+, web.post_pagename
+, web.post_page_event
+, web.post_event_list
+, web.article_id
+, web.article_id_alt_1
+, web.member_type
+, web.brand
+, web.section1
+, web.section2
+, web.section3
+, web.page_type
+, web.page_url
+, web.source_code_id
+, web.post_campaign
+, web.logged_in_status
+, web.dark_social_facebook
+, web.dark_social_instagram
+, web.content_restriction_type
+, web.device_type
+, web.newskey
+
+from clickstream_web web
+
+where 1=1
+
+union all 
+
+select  
+
+app.source_code
+, app.subscriber_id_src
+, app.visit_id
+, concat(app.source_code,'|',app.visit_id) as source_visit_id
+, app.page_view
+, app.page_view_alt_1
+, app.page_view_alt_2
+, app.article_view
+, app.article_view_alt_1
+, app.article_view_alt_2
+, app.article_view_alt_3
+, app.au_activity_date
+, app.au_activity_datetime
+, app.breach_view_flag
+, app.subscription_signup_start_flag
+, app.subscription_signup_complete_flag
+, app.direct_shop_front_flag
+, app.ref_domain
+, app.referrer
+, app.post_pagename
+, app.post_page_event
+, app.post_event_list
+, app.article_id
+, app.article_id_alt_1
+, app.member_type
+, app.brand
+, app.section1
+, app.section2
+, app.section3
+, app.page_type
+, app.page_url
+, app.source_code_id
+, app.post_campaign
+, app.logged_in_status
+, app.dark_social_facebook
+, app.dark_social_instagram
+, app.content_restriction_type
+, app.device_type
+, app.newskey
+
+from clickstream_app app
+
+where 1=1
+
+union all 
+
+select  
+
+amp.source_code
+, amp.subscriber_id_src
+, amp.visit_id
+, concat(amp.source_code,'|',amp.visit_id) as source_visit_id
+, amp.page_view
+, amp.page_view_alt_1
+, amp.page_view_alt_2
+, amp.article_view
+, amp.article_view_alt_1
+, amp.article_view_alt_2
+, amp.article_view_alt_3
+, amp.au_activity_date
+, amp.au_activity_datetime
+, amp.breach_view_flag
+, amp.subscription_signup_start_flag
+, amp.subscription_signup_complete_flag
+, amp.direct_shop_front_flag
+, amp.ref_domain
+, amp.referrer
+, amp.post_pagename
+, amp.post_page_event
+, amp.post_event_list
+, amp.article_id
+, amp.article_id_alt_1
+, amp.member_type
+, amp.brand
+, amp.section1
+, amp.section2
+, amp.section3
+, amp.page_type
+, amp.page_url
+, amp.source_code_id
+, amp.post_campaign
+, amp.logged_in_status
+, amp.dark_social_facebook
+, amp.dark_social_instagram
+, amp.content_restriction_type
+, amp.device_type
+, amp.newskey
+
+from clickstream_amp amp
+
+where 1=1
+
+)
+, 
+
+visit_engagement_detail
+
+as
+
+(
+select 
+
+ce.source_code
+, ce.visit_id
+, ce.source_visit_id
+, ce.subscriber_id_src
+, min(ce.au_activity_datetime) over(partition by ce.source_visit_id) as visit_start_datetime
+, cast(min(ce.au_activity_datetime) over(partition by ce.source_visit_id) as date) as visit_start_date
+, max(ce.au_activity_datetime) over(partition by ce.source_visit_id) as visit_end_datetime
+, cast(max(ce.au_activity_datetime) over(partition by ce.source_visit_id) as date) as visit_end_date
+, ce.au_activity_datetime
+, case when ce.page_view = 1 then row_number() over(partition by ce.source_visit_id, ce.page_view order by ce.au_activity_datetime asc) else 0 end as page_view_order
+, coalesce(nth_value(ce.ref_domain,1) over(partition by ce.source_visit_id order by ce.au_activity_datetime asc),'direct') as visit_referrer_domain
+, coalesce(nth_value(ce.referrer,1) over(partition by ce.source_visit_id order by ce.au_activity_datetime asc),'direct') as visit_referrer
+, ce.member_type
+, ce.brand
+, coalesce(bd.masthead, 'Other') as masthead
+, ce.section1
+, ce.section2
+, ce.section3
+, ce.page_type
+, ce.page_url
+, ce.page_view
+, ce.page_view_alt_1
+, ce.page_view_alt_2
+, ce.article_view
+, ce.article_view_alt_1
+, ce.article_view_alt_2
+, ce.article_view_alt_3
+, ce.breach_view_flag
+, ce.subscription_signup_start_flag
+, ce.subscription_signup_complete_flag
+, ce.direct_shop_front_flag
+, case when (ce.breach_view_flag + ce.subscription_signup_start_flag + ce.subscription_signup_complete_flag + ce.direct_shop_front_flag) > 0 then 1 else 0 end as shopfront_activity_flag
+, ce.content_restriction_type
+, ce.device_type
+, ce.source_code_id
+, case when ce.source_code_id like '%_FBK%' then 'Facebook'
+            when ce.source_code_id like '%_TWT%' then 'Twitter'
+            when ce.source_code_id like '%_GGL%' then 'Google'
+            when ce.source_code_id like '%_GGP%' then 'Google+'
+            when ce.source_code_id like '%a_RED%' then 'Reddit'
+            when ce.source_code_id like '%_LIN%' then 'LinkedIn'
+            when ce.source_code_id like '%_NWL%' then 'Newsletter'
+            when ce.source_code_id like '%_FMB%' then 'Facebook Messenger Bot'
+            when ce.source_code_id like '%_AMP%' then 'Google AMP'
+            when ce.source_code_id like '%_NEW%' then 'News.com.au'
+      else
+            'Not Available'
+      end as source_code_group
+, min(case when ce.subscription_signup_complete_flag = 1 then ce.au_activity_datetime end) over(partition by ce.source_visit_id) as min_subscription_sign_up_activity_date
+, max(case when ce.subscription_signup_complete_flag = 1 then ce.au_activity_datetime end) over(partition by ce.source_visit_id) as max_subscription_sign_up_activity_date
+
+from consumer_engagement ce
+
+left outer join `nau-data-nprod-dataservices.reference_data_genome.t_brand_dim` bd
+on ce.brand = bd.brand
+
+where 1=1
+
+)
+
+/* Query */ 
+
+
+select 
+
+squ.*
+
+from 
+
+visit_engagement_detail
+
+squ
+
+where 1=1
+;
+
+end
