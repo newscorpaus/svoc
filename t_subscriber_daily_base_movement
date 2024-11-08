@@ -1,0 +1,737 @@
+/*
+GENO 0017.005.12 - 20240823 Rolling 13 Month Daily Subscription Base, Movement & Active Days
+Method to create 13 months rolling subscriber base, movement & active days
+Was 0017.005.09 (CUR) Daily Subscriber Base & Movements
+Includes Lapsed Subscribers
+Excludes "Print-only"
+Version Date: 20240823
+*/
+
+declare activity_end_date date default date(current_date('Australia/Sydney') -1);
+declare activity_start_date date default date_sub(activity_end_date, interval ((7*8)-1) day);
+declare report_start_date date default date(activity_start_date + 27);
+declare report_end_date date default date(activity_end_date);
+declare rpd_pt_date array<date> default (select array_agg(distinct pt_date) from(select max(dw_tgt_partition_date) as pt_date from  `ncau-data-newsquery-prd.bdm_consumer.rate_plan_dim` where dw_tgt_partition_date between current_date('Australia/Sydney') - 14 and current_date('Australia/Sydney'))); --<='2199-12-31'));
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_daily_base_movement`
+
+partition by report_date
+
+cluster by combined_rate_plan_code
+
+
+as
+
+/*
+Subscriber Base & Active Days Build
+*/
+
+with activity_calendar_dim 
+
+as 
+
+(
+select 
+
+cal.*
+, date_sub(cal.calendar_date, interval 27 day) as rolling_start_date
+, cal.calendar_date as rolling_end_date
+
+from `nau-data-nprod-dataservices.consumer_reference_data.t_calendar_dim` cal
+
+where 1=1
+and cal.calendar_date between report_start_date and report_end_date
+
+)
+
+
+,
+
+engagement_txfm1
+
+as
+
+(
+select  
+
+sef.pcs_id as subscriber_id_src
+, cast(sef.visit_timestamp as date) as au_activity_date
+, sum(sef.total_page_views) as page_view_count
+, sum(case when sef.source_code = 'adobe app' then sef.total_page_views else 0 end) as app_page_view_count
+, sum(case when sef.is_article = 'Y'  then  sef.total_page_views else 0 end) as  article_view_count
+
+from `ncau-data-newsquery-prd.bdm_consumer.subscriber_engagement_fct` sef
+
+where 1=1
+and sef.dw_src_partition_date between activity_start_date - 2 and activity_end_date + 2
+and cast(sef.visit_timestamp as date) between activity_start_date and activity_end_date
+and sef.pcs_id not in('')
+
+group by 1,2
+
+)
+, 
+
+engagement_txfm2
+
+as
+
+(
+select 
+
+cal.calendar_date as report_date
+, tx1.subscriber_id_src
+, count(distinct tx1.au_activity_date) as active_days_count
+, count(distinct case when date_diff(cast(cal.calendar_date as date),cast(tx1.au_activity_date as date), day) between 0 and 6 then 4 
+                        when date_diff(cast(cal.calendar_date as date),cast(tx1.au_activity_date as date), day) between 7 and 13 then 3 
+                        when date_diff(cast(cal.calendar_date as date),cast(tx1.au_activity_date as date), day) between 14 and 20 then 2 
+                        when date_diff(cast(cal.calendar_date as date),cast(tx1.au_activity_date as date), day) between 21 and 27 then 1 end) as active_weeks_count
+, count(distinct case when cast(tx1.au_activity_date as date) = cal.rolling_end_date then cast(tx1.au_activity_date as date) end) as active_yesterday_count                        
+, count(distinct case when tx1.app_page_view_count > 0 then tx1.au_activity_date end) as app_active_days
+, sum(tx1.page_view_count) as page_view_count
+
+from engagement_txfm1 tx1
+
+inner join activity_calendar_dim cal
+on tx1.au_activity_date between cal.rolling_start_date and cal.rolling_end_date  
+
+where 1=1
+
+group by 1,2
+
+)
+
+/*
+Subscriber Closing Base
+*/
+,
+
+subscriber_base_txfm1 
+
+as  
+
+(
+select 
+
+sbf.member_type
+, sbf.dw_subscriber_party_id
+, sbf.subscriber_id_src
+, sbf.subscriber_tenure_order
+, sbf.dw_subscriber_start_datetime
+, sbf.dw_subscriber_end_datetime
+, sbf.dw_subscriber_base_date
+, sbf.subscriber_count
+, sbf.active_subscriber_count
+, sbf.subscriber_status_code
+, sbf.subscription_source_system_code
+, sbf.prior_subscription_registration_flag
+, sbf.prior_paid_subscription_flag
+, sbf.prior_registration_flag
+, rpd.masthead
+, rpd.rate_plan_code
+, rpd.delivery_medium_type
+, rpd.classification_level_1
+, rpd.classification_level_2
+, sbf.is_paying_flag
+, sbf.customer_type
+, regexp_replace(psb.sold_in_channel, 'Bau ','BAU ') as sold_in_channel
+, psb.sold_in_source_code
+, psb.sold_in_source_referrer
+, psb.offer_category_name
+, psb.frontbook_backbook_group_name
+, psb.local_brand_name
+, psb.local_publication_name
+, psb.hyper_local_brand_name
+, psb.hyper_local_publication_name
+, sbf.subscription_id_src
+, sbf.dw_effective_start_datetime
+, sbf.dw_effective_end_datetime
+, sbf.subscription_count
+, row_number() over(partition by sbf.member_type, sbf.subscriber_id_src, sbf.subscriber_tenure_order, sbf.dw_subscriber_start_datetime order by sbf.subscription_id_src asc) as subscriber_record_order
+
+from `nau-data-nprod-dataservices.bdm_genome.t_subscriber_base_fct_staging` sbf
+
+inner join `ncau-data-newsquery-prd.bdm_consumer.rate_plan_dim` rpd
+on sbf.dw_rate_plan_id = rpd.dw_rate_plan_id 
+and rpd.dw_tgt_partition_date in unnest(rpd_pt_date)
+and rpd.dw_source_system_code = 'THINK'
+
+inner join `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_base` psb
+on cast(sbf.subscription_id_src as string) = cast(psb.subscription_id_src as string)
+and cast(sbf.dw_effective_start_datetime as date) = cast(psb.dw_effective_start_datetime as date) 
+--and psb.dw_tgt_partition_date in unnest(sb_pt_date)
+and psb.dw_source_system_code = 'THINK'
+
+where 1=1
+and rpd.masthead not in('SN')
+and rpd.classification_level_2 not in('Print-only')
+
+)
+
+,
+
+subscriber_base_txfm2
+
+as 
+
+(
+
+select 
+
+tx1.member_type
+, tx1.subscriber_id_src
+, tx1.subscriber_tenure_order
+, tx1.dw_subscriber_start_datetime
+, tx1.dw_subscriber_end_datetime
+, tx1.prior_subscription_registration_flag
+, tx1.prior_paid_subscription_flag
+, tx1.prior_registration_flag
+, array_to_string(array_agg(distinct tx1.masthead order by tx1.masthead),', ') as combined_masthead
+, array_to_string(array_agg(distinct tx1.is_paying_flag order by tx1.is_paying_flag),', ') as combined_is_paying_flag
+, array_to_string(array_agg(distinct tx1.customer_type order by tx1.customer_type),', ') as combined_customer_type
+, array_to_string(array_agg(distinct tx1.rate_plan_code order by tx1.rate_plan_code),', ') as combined_rate_plan_code
+, array_to_string(array_agg(distinct tx1.delivery_medium_type order by tx1.delivery_medium_type),', ') as combined_delivery_medium_type
+, array_to_string(array_agg(distinct tx1.classification_level_1 order by tx1.classification_level_1),', ') as combined_classification_level_1
+, array_to_string(array_agg(distinct tx1.classification_level_2 order by tx1.classification_level_2),', ') as combined_classification_level_2
+, array_to_string(array_agg(distinct tx1.local_brand_name order by tx1.local_brand_name),', ') as combined_local_brand_name
+, array_to_string(array_agg(distinct tx1.hyper_local_brand_name order by tx1.hyper_local_brand_name),', ') as combined_hyper_local_brand_name
+, sum(subscription_count) as subscriber_subscription_count
+, array_agg(struct(
+  tx1.masthead
+, tx1.rate_plan_code
+, tx1.delivery_medium_type
+, tx1.classification_level_1
+, tx1.classification_level_2
+, tx1.is_paying_flag
+, tx1.customer_type
+, tx1.sold_in_channel
+, tx1.sold_in_source_code
+, tx1.sold_in_source_referrer
+, tx1.offer_category_name
+, tx1.frontbook_backbook_group_name
+, tx1.local_brand_name
+, tx1.local_publication_name
+, tx1.hyper_local_brand_name
+, tx1.hyper_local_publication_name
+, tx1.subscription_id_src
+, tx1.dw_effective_start_datetime
+, tx1.dw_effective_end_datetime
+, tx1.subscription_count
+, tx1.subscriber_record_order
+)) as subscription_details
+
+from subscriber_base_txfm1 tx1
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8
+
+) 
+,  
+
+subscriber_base_txfm3
+
+as
+
+(
+select 
+
+acd.calendar_date as report_date
+, tx2.member_type
+, tx2.combined_masthead
+, tx2.combined_is_paying_flag
+, tx2.combined_customer_type
+, tx2.combined_rate_plan_code
+, tx2.combined_delivery_medium_type
+, tx2.combined_classification_level_1
+, tx2.combined_classification_level_2
+, tx2.combined_local_brand_name
+, tx2.combined_hyper_local_brand_name
+, tx2.prior_subscription_registration_flag
+, tx2.prior_paid_subscription_flag
+, tx2.prior_registration_flag
+, coalesce(ex2.active_days_count,0) as subscriber_last_28_days_active_days
+, coalesce(ex2.active_weeks_count,0) as subscriber_last_28_days_active_weeks
+, coalesce(ex2.active_yesterday_count,0) as subscriber_last_28_days_active_yesterday
+, coalesce(ex2.app_active_days,0) as subscriber_last_28_days_app_active_days
+, sd.masthead
+, sd.is_paying_flag
+, sd.customer_type
+, sd.rate_plan_code
+, sd.delivery_medium_type
+, sd.classification_level_1
+, sd.classification_level_2
+, sd.local_brand_name
+, sd.local_publication_name
+, sd.hyper_local_brand_name
+, sd.hyper_local_publication_name
+, sd.sold_in_channel
+, sd.sold_in_source_code
+, sd.sold_in_source_referrer
+, sd.offer_category_name
+, sd.frontbook_backbook_group_name
+, sum(sd.subscription_count) as subscription_count
+, sum(case when sd.subscriber_record_order = 1 then sd.subscriber_record_order else 0 end) as subscriber_count
+, sum(coalesce(ex2.page_view_count,0)) as subscriber_last_28_days_page_view_count
+
+from subscriber_base_txfm2 tx2
+, unnest(subscription_details) as sd
+
+inner join activity_calendar_dim acd
+on acd.calendar_date between cast(tx2.dw_subscriber_start_datetime as date) and cast(tx2.dw_subscriber_end_datetime as date)
+
+left outer join engagement_txfm2 ex2
+on cast(tx2.subscriber_id_src as string) = cast(ex2.subscriber_id_src as string)
+and acd.calendar_date = ex2.report_date
+-- and tx2.subscriber_record_order = 1
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34
+
+)
+, 
+
+final_closing_base
+
+as
+
+(
+select 
+
+tx3.report_date
+, tx3.member_type
+, tx3.combined_masthead
+, tx3.combined_is_paying_flag
+, tx3.combined_customer_type
+, tx3.combined_rate_plan_code
+, tx3.combined_delivery_medium_type
+, tx3.combined_classification_level_1
+, tx3.combined_classification_level_2
+, tx3.combined_local_brand_name
+, tx3.combined_hyper_local_brand_name
+, tx3.prior_subscription_registration_flag
+, tx3.prior_paid_subscription_flag
+, tx3.prior_registration_flag
+, tx3.subscriber_last_28_days_active_days
+, tx3.subscriber_last_28_days_active_weeks
+, tx3.subscriber_last_28_days_active_yesterday
+, tx3.subscriber_last_28_days_app_active_days
+, sum(tx3.subscriber_count) as subscriber_count
+, sum(0) as subscriber_acquisition_count
+, sum(0) as subscriber_cancellation_count
+, sum(0) as subscriber_movement_to_count
+, sum(0) as subscriber_movement_from_count
+, sum(tx3.subscriber_last_28_days_page_view_count) as subscriber_last_28_days_page_view_count
+, sum(tx3.subscription_count) as subscriber_subscription_count
+, array_agg(struct(
+  tx3.masthead
+, tx3.is_paying_flag
+, tx3.customer_type
+, tx3.rate_plan_code
+, tx3.delivery_medium_type
+, tx3.classification_level_1
+, tx3.classification_level_2
+, tx3.local_brand_name
+, tx3.local_publication_name
+, tx3.hyper_local_brand_name
+, tx3.hyper_local_publication_name
+, tx3.sold_in_channel
+, tx3.sold_in_source_code
+, tx3.sold_in_source_referrer
+, tx3.offer_category_name
+, tx3.frontbook_backbook_group_name
+, tx3.subscription_count
+, 0 as subscription_acquisition_count
+, 0 as subscription_cancellation_count
+, 0 as subscription_rate_plan_to_count
+, 0 as subscription_rate_plan_from_count
+, 0 as subscriber_subscription_movement_to_count
+, 0 as subscriber_subscription_movement_from_count
+, 0 as detail_subscription_acquisition_count 
+, 0 as detail_subscription_cancellation_count 
+, 0 as detail_subscription_rate_plan_movement_to_count 
+, 0 as detail_subscription_rate_plan_movement_from_count
+, 0 as net_subscription_acquisition_count
+, 0 as net_subscription_cancellation_count)) as subscription_detail
+
+from subscriber_base_txfm3 tx3
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18
+
+)
+/*
+Subscriber Movement Build
+*/
+
+,
+
+subscriber_movement_txfm1 
+
+as  
+
+(
+select 
+
+smf.member_type
+, smf.dw_subscriber_party_id
+, smf.subscriber_id_src
+, smf.subscriber_tenure_order
+, smf.subscriber_movement_datetime
+, smf.dw_subscriber_movement_date
+, smf.subscriber_movement_type_code
+, smf.subscriber_movement_count_type
+, smf.subscriber_movement_count
+, smf.subscriber_status_code
+, smf.subscription_source_system_code
+, smf.prior_subscription_registration_flag
+, smf.prior_paid_subscription_flag
+, smf.prior_registration_flag
+, rpd.masthead
+, rpd.rate_plan_code
+, rpd.delivery_medium_type
+, rpd.classification_level_1
+, rpd.classification_level_2
+, regexp_replace(psb.sold_in_channel, 'Bau ','BAU ') as sold_in_channel
+, psb.sold_in_source_code
+, psb.sold_in_source_referrer
+, psb.offer_category_name
+, psb.frontbook_backbook_group_name
+, psb.local_brand_name
+, psb.local_publication_name
+, psb.hyper_local_brand_name
+, psb.hyper_local_publication_name
+, smf.is_paying_flag
+, smf.customer_type
+, smf.subscriber_subscription_movement_type_code
+, smf.subscriber_subscription_movement_count_type
+, smf.subscription_movement_count
+, smf.subscription_movement_count as agg_subscription_movement_count
+, case when smf.subscriber_movement_type_code = 'from' then date_add(cast(smf.subscriber_movement_datetime as date), interval 1 day) else cast(smf.subscriber_movement_datetime as date) end as movement_report_date
+, row_number() over(partition by smf.member_type, smf.subscriber_id_src, smf.subscriber_tenure_order, smf.subscriber_movement_datetime order by smf.subscription_id_src asc) as subscriber_record_order
+, smf.subscription_detail_movement_count_type
+, smf.subscription_detail_movement_count_sub_type
+
+from `nau-data-nprod-dataservices.bdm_genome.t_subscriber_movement_fct_staging` smf
+
+inner join `ncau-data-newsquery-prd.bdm_consumer.rate_plan_dim` rpd
+on smf.dw_rate_plan_id = rpd.dw_rate_plan_id 
+and rpd.dw_tgt_partition_date in unnest(rpd_pt_date)
+and rpd.dw_source_system_code = 'THINK'
+
+inner join `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_base` psb
+on cast(smf.subscription_id_src as string) = cast(psb.subscription_id_src as string)
+and cast(smf.dw_effective_start_datetime as date) = cast(psb.dw_effective_start_datetime as date) 
+--and psb.dw_tgt_partition_date in unnest(sb_pt_date)
+and psb.dw_source_system_code = 'THINK'
+
+where 1=1
+and cast(smf.subscriber_movement_datetime as date) >= date(report_start_date - 1)
+and rpd.masthead not in('SN')
+and rpd.classification_level_2 not in('Print-only')
+
+)
+, 
+
+subscriber_movement_txfm2
+
+as
+
+(
+select 
+
+tx1.member_type
+, tx1.dw_subscriber_party_id
+, tx1.subscriber_id_src
+, tx1.subscriber_tenure_order
+, tx1.subscriber_movement_datetime
+, tx1.dw_subscriber_movement_date
+, tx1.subscriber_movement_type_code
+, tx1.subscriber_movement_count_type
+, case when tx1.subscriber_record_order = 1 then tx1.subscriber_movement_count end as subscriber_movement_count
+, tx1.subscriber_status_code
+, tx1.subscription_source_system_code
+, tx1.prior_subscription_registration_flag
+, tx1.prior_paid_subscription_flag
+, tx1.prior_registration_flag
+, tx1.movement_report_date
+, array_to_string(array_agg(distinct tx1.masthead order by tx1.masthead),', ') as combined_masthead
+, array_to_string(array_agg(distinct tx1.is_paying_flag order by tx1.is_paying_flag),', ') as combined_is_paying_flag
+, array_to_string(array_agg(distinct tx1.customer_type order by tx1.customer_type),', ') as combined_customer_type
+, array_to_string(array_agg(distinct tx1.rate_plan_code order by tx1.rate_plan_code),', ') as combined_rate_plan_code
+, array_to_string(array_agg(distinct tx1.delivery_medium_type order by tx1.delivery_medium_type),', ') as combined_delivery_medium_type
+, array_to_string(array_agg(distinct tx1.classification_level_1 order by tx1.classification_level_1),', ') as combined_classification_level_1
+, array_to_string(array_agg(distinct tx1.classification_level_2 order by tx1.classification_level_2),', ') as combined_classification_level_2
+, array_to_string(array_agg(distinct tx1.local_brand_name order by tx1.local_brand_name),', ') as combined_local_brand_name
+, array_to_string(array_agg(distinct tx1.hyper_local_brand_name order by tx1.hyper_local_brand_name),', ') as combined_hyper_local_brand_name
+, array_agg(struct(
+tx1.masthead
+, tx1.is_paying_flag
+, tx1.customer_type
+, tx1.rate_plan_code
+, tx1.delivery_medium_type
+, tx1.classification_level_1
+, tx1.classification_level_2
+, tx1.sold_in_channel
+, tx1.sold_in_source_code
+, tx1.sold_in_source_referrer
+, tx1.offer_category_name
+, tx1.frontbook_backbook_group_name
+, tx1.local_brand_name
+, tx1.local_publication_name
+, tx1.hyper_local_brand_name
+, tx1.hyper_local_publication_name
+, tx1.subscription_movement_count
+, tx1.subscriber_subscription_movement_type_code 
+, tx1.subscriber_subscription_movement_count_type 
+, tx1.subscription_detail_movement_count_type
+, tx1.subscription_detail_movement_count_sub_type
+)) as subscription_details
+
+from subscriber_movement_txfm1 tx1
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+
+)
+, 
+
+subscriber_movement_txfm3
+
+as
+
+(
+select 
+
+acd.calendar_date as report_date
+, tx2.member_type
+, tx2.combined_masthead
+, tx2.combined_is_paying_flag
+, tx2.combined_customer_type
+, tx2.combined_rate_plan_code
+, tx2.combined_delivery_medium_type
+, tx2.combined_classification_level_1
+, tx2.combined_classification_level_2
+, tx2.combined_local_brand_name
+, tx2.combined_hyper_local_brand_name
+, tx2.prior_subscription_registration_flag
+, tx2.prior_paid_subscription_flag
+, tx2.prior_registration_flag
+, sd.masthead
+, sd.is_paying_flag
+, sd.customer_type
+, sd.rate_plan_code
+, sd.delivery_medium_type
+, sd.classification_level_1
+, sd.classification_level_2
+, sd.sold_in_channel
+, sd.sold_in_source_code
+, sd.sold_in_source_referrer
+, sd.offer_category_name
+, sd.frontbook_backbook_group_name
+, sd.local_brand_name
+, sd.local_publication_name
+, sd.hyper_local_brand_name
+, sd.hyper_local_publication_name
+, sd.subscription_movement_count
+
+-- Subscriber Movement Fields
+, sum(case when tx2.subscriber_movement_type_code = 'to' and tx2.subscriber_movement_count_type = 'subscriber_acquisition' then tx2.subscriber_movement_count else 0 end) as subscriber_acquisition_count 
+, sum(case when tx2.subscriber_movement_type_code = 'from' and tx2.subscriber_movement_count_type = 'subscriber_cancellation' then tx2.subscriber_movement_count else 0 end) as subscriber_cancellation_count 
+, sum(case when tx2.subscriber_movement_type_code = 'to' and tx2.subscriber_movement_count_type = 'subscriber_movement' then tx2.subscriber_movement_count else 0 end) as subscriber_movement_to_count 
+, sum(case when tx2.subscriber_movement_type_code = 'from' and tx2.subscriber_movement_count_type = 'subscriber_movement' then tx2.subscriber_movement_count else 0 end) as subscriber_movement_from_count 
+
+-- Subscription Movement Fields
+, sum(case when sd.subscriber_subscription_movement_type_code = 'to' and sd.subscriber_subscription_movement_count_type = 'acquisition' then sd.subscription_movement_count else 0 end) as subscription_acquisition_count 
+, sum(case when sd.subscriber_subscription_movement_type_code = 'from' and sd.subscriber_subscription_movement_count_type = 'cancellation' then sd.subscription_movement_count else 0 end) as subscription_cancellation_count 
+, sum(case when sd.subscriber_subscription_movement_type_code = 'to' and sd.subscriber_subscription_movement_count_type = 'rate_plan_movement' then sd.subscription_movement_count else 0 end) as subscription_rate_plan_to_count 
+, sum(case when sd.subscriber_subscription_movement_type_code = 'from' and sd.subscriber_subscription_movement_count_type = 'rate_plan_movement' then sd.subscription_movement_count else 0 end) as subscription_rate_plan_from_count 
+, sum(case when sd.subscriber_subscription_movement_type_code = 'to' and sd.subscriber_subscription_movement_count_type = 'no_movement' then sd.subscription_movement_count else 0 end) as subscriber_subscription_movement_to_count 
+, sum(case when sd.subscriber_subscription_movement_type_code = 'from' and sd.subscriber_subscription_movement_count_type = 'no_movement' then sd.subscription_movement_count else 0 end) as subscriber_subscription_movement_from_count 
+, sum(case when sd.subscription_detail_movement_count_type = 'acquisition' then sd.subscription_movement_count else 0 end) as detail_subscription_acquisition_count 
+, sum(case when sd.subscription_detail_movement_count_type = 'cancellation' then sd.subscription_movement_count else 0 end) as detail_subscription_cancellation_count 
+, sum(case when sd.subscription_detail_movement_count_type = 'rate_plan_movement' and sd.subscriber_subscription_movement_type_code = 'to' then sd.subscription_movement_count else 0 end) as detail_subscription_rate_plan_movement_to_count 
+, sum(case when sd.subscription_detail_movement_count_type = 'rate_plan_movement' and sd.subscriber_subscription_movement_type_code = 'from' then sd.subscription_movement_count else 0 end) as detail_subscription_rate_plan_movement_from_count 
+, sum(case when sd.subscription_detail_movement_count_sub_type = 'acquisition' then sd.subscription_movement_count else 0 end) as net_subscription_acquisition_count 
+, sum(case when sd.subscription_detail_movement_count_sub_type = 'cancellation' then sd.subscription_movement_count else 0 end) as net_subscription_cancellation_count 
+
+from subscriber_movement_txfm2 tx2
+, unnest(subscription_details) as sd
+
+inner join activity_calendar_dim acd
+on cast(tx2.movement_report_date as date) = cast(acd.calendar_date as date)
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+
+)
+, 
+
+final_daily_movement
+
+as
+
+(
+select
+
+dm.report_date
+, dm.member_type
+, dm.combined_masthead
+, dm.combined_is_paying_flag
+, dm.combined_customer_type
+, dm.combined_rate_plan_code
+, dm.combined_delivery_medium_type
+, dm.combined_classification_level_1
+, dm.combined_classification_level_2
+, dm.combined_local_brand_name
+, dm.combined_hyper_local_brand_name
+, dm.prior_subscription_registration_flag
+, dm.prior_paid_subscription_flag
+, dm.prior_registration_flag
+, sum(0) as subscriber_last_28_days_active_days
+, sum(0) as subscriber_last_28_days_active_weeks
+, sum(0) as subscriber_last_28_days_active_yesterday
+, sum(0) as subscriber_last_28_days_app_active_days
+, sum(0) as subscriber_count
+, sum(dm.subscriber_acquisition_count) as subscriber_acquisition_count
+, sum(dm.subscriber_cancellation_count) as subscriber_cancellation_count
+, sum(dm.subscriber_movement_to_count) as subscriber_movement_to_count
+, sum(dm.subscriber_movement_from_count) as subscriber_movement_from_count
+, sum(0) as subscriber_last_28_days_page_view_count
+, sum(0) as subscriber_subscription_count
+, array_agg(struct(
+  dm.masthead
+, dm.is_paying_flag
+, dm.customer_type
+, dm.rate_plan_code
+, dm.delivery_medium_type
+, dm.classification_level_1
+, dm.classification_level_2
+, dm.local_brand_name
+, dm.local_publication_name
+, dm.hyper_local_brand_name
+, dm.hyper_local_publication_name
+, dm.sold_in_channel
+, dm.sold_in_source_code
+, dm.sold_in_source_referrer
+, dm.offer_category_name
+, dm.frontbook_backbook_group_name
+, 0 as subscription_count
+, dm.subscription_acquisition_count
+, dm.subscription_cancellation_count
+, dm.subscription_rate_plan_to_count
+, dm.subscription_rate_plan_from_count
+, dm.subscriber_subscription_movement_to_count
+, dm.subscriber_subscription_movement_from_count
+, dm.detail_subscription_acquisition_count 
+, dm.detail_subscription_cancellation_count 
+, dm.detail_subscription_rate_plan_movement_to_count 
+, dm.detail_subscription_rate_plan_movement_from_count
+, dm.net_subscription_acquisition_count
+, dm.net_subscription_cancellation_count)) as subscription_detail
+
+from subscriber_movement_txfm3 dm
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14
+
+)
+,
+
+union_base_movement
+
+as
+
+(
+select 
+
+fcb.report_date
+, fcb.member_type
+, fcb.combined_masthead
+, fcb.combined_is_paying_flag
+, fcb.combined_customer_type
+, fcb.combined_rate_plan_code
+, fcb.combined_delivery_medium_type
+, fcb.combined_classification_level_1
+, fcb.combined_classification_level_2
+, fcb.combined_local_brand_name
+, fcb.combined_hyper_local_brand_name
+, fcb.prior_subscription_registration_flag
+, fcb.prior_paid_subscription_flag
+, fcb.prior_registration_flag
+, fcb.subscriber_last_28_days_active_days
+, fcb.subscriber_last_28_days_active_weeks
+, fcb.subscriber_last_28_days_active_yesterday
+, fcb.subscriber_last_28_days_app_active_days
+, fcb.subscriber_last_28_days_page_view_count
+, fcb.subscriber_count
+, fcb.subscriber_subscription_count
+, fcb.subscriber_acquisition_count
+, fcb.subscriber_cancellation_count
+, fcb.subscriber_movement_to_count
+, fcb.subscriber_movement_from_count
+, fcb.subscription_detail
+
+from final_closing_base fcb
+
+where 1=1
+
+union all 
+
+select 
+
+fdm.report_date
+, fdm.member_type
+, fdm.combined_masthead
+, fdm.combined_is_paying_flag
+, fdm.combined_customer_type
+, fdm.combined_rate_plan_code
+, fdm.combined_delivery_medium_type
+, fdm.combined_classification_level_1
+, fdm.combined_classification_level_2
+, fdm.combined_local_brand_name
+, fdm.combined_hyper_local_brand_name
+, fdm.prior_subscription_registration_flag
+, fdm.prior_paid_subscription_flag
+, fdm.prior_registration_flag
+, fdm.subscriber_last_28_days_active_days
+, fdm.subscriber_last_28_days_active_weeks
+, fdm.subscriber_last_28_days_active_yesterday
+, fdm.subscriber_last_28_days_app_active_days
+, fdm.subscriber_last_28_days_page_view_count
+, fdm.subscriber_count
+, fdm.subscriber_subscription_count
+, fdm.subscriber_acquisition_count
+, fdm.subscriber_cancellation_count
+, fdm.subscriber_movement_to_count
+, fdm.subscriber_movement_from_count
+, fdm.subscription_detail
+
+from final_daily_movement fdm
+
+where 1=1
+
+)
+
+-- Query
+
+select 
+
+squ.*
+
+from 
+
+-- final_closing_base
+union_base_movement 
+
+squ
+
+where 1=1
+
+;
+
