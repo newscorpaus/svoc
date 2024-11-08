@@ -1,0 +1,101 @@
+/*
+CHURN 0004.001.01 - 20241017 Churn Score Fact 
+Version Date: 20241017 
+*/
+
+create or replace table `nau-data-nprod-dataservices.consumer_reference_data.t_subscription_churn_score_fct`
+
+partition by run_date
+
+cluster by subscription_id_src, highest_shap_mapped
+
+as
+
+with churn_automation_txfm1
+
+as 
+
+(
+select
+
+cam.*
+, row_number()over(partition by cam.subscription_id order by rundate desc) as subscription_rundate_order
+, lead(rundate) over(partition by cam.subscription_id order by rundate asc) as next_rundate
+
+from `nau-data-prod-dataservices.Churn_prediction_model.churn_automation` cam
+
+where 1=1
+
+)
+, 
+
+churn_automation_txfm2 
+
+as
+
+(
+select 
+
+cast(cam.rundate as datetime) as run_datetime
+, cast(cam.rundate as date) as run_date
+, cam.subscription_rundate_order
+, cam.pcsid
+, cam.subscription_id as subscription_id_src
+, cam.Highest_Shap_Mapped as highest_shap_mapped
+, cam.Churn_Score as churn_score
+, case when cam.Churn_Score = 0 then 1
+        when cam.Churn_Score > 0 and cam.Churn_Score <= 0.1 then 2
+        when cam.Churn_Score > 0.1 and cam.Churn_Score <= 0.2 then 3
+        when cam.Churn_Score > 0.2 and cam.Churn_Score <= 0.3 then 4
+        when cam.Churn_Score > 0.3 and cam.Churn_Score <= 0.4 then 5
+        when cam.Churn_Score > 0.4 and cam.Churn_Score <= 0.5 then 6
+        when cam.Churn_Score > 0.5 and cam.Churn_Score <= 0.6 then 7
+        when cam.Churn_Score > 0.6 and cam.Churn_Score <= 0.7 then 8
+        when cam.Churn_Score > 0.7 and cam.Churn_Score <= 0.8 then 9
+        when cam.Churn_Score > 0.8 and cam.Churn_Score <= 0.9 then 10
+        when cam.Churn_Score > 0.9 and cam.Churn_Score <= 1 then 11
+        end as churn_score_group_order
+, case when cam.Churn_Score = 0 then '0 Score'
+        when cam.Churn_Score > 0 and cam.Churn_Score <= 0.1 then '> 0 to 0.1 Score'
+        when cam.Churn_Score > 0.1 and cam.Churn_Score <= 0.2 then '> 0.1 to 0.2 Score'
+        when cam.Churn_Score > 0.2 and cam.Churn_Score <= 0.3 then '> 0.2 to 0.3 Score'
+        when cam.Churn_Score > 0.3 and cam.Churn_Score <= 0.4 then '> 0.3 to 0.4 Score'
+        when cam.Churn_Score > 0.4 and cam.Churn_Score <= 0.5 then '> 0.4 to 0.5 Score'
+        when cam.Churn_Score > 0.5 and cam.Churn_Score <= 0.6 then '> 0.5 to 0.6 Score'
+        when cam.Churn_Score > 0.6 and cam.Churn_Score <= 0.7 then '> 0.6 to 0.7 Score'
+        when cam.Churn_Score > 0.7 and cam.Churn_Score <= 0.8 then '> 0.7 to 0.8 Score'
+        when cam.Churn_Score > 0.8 and cam.Churn_Score <= 0.9 then '> 0.8 to 0.9 Score'
+        when cam.Churn_Score > 0.9 and cam.Churn_Score <= 1 then '> 0.9 to 1 Score'
+        end as churn_score_group
+
+, cast(cam.rundate as date) as churn_score_effective_start_date
+, cast(coalesce(cast(cam.next_rundate as date) -1,cast(current_date('Australia/Sydney')- 1 as date)) as date) as churn_score_effective_end_date
+
+from churn_automation_txfm1 cam
+
+where 1=1
+)
+
+-- Query 
+
+select 
+
+squ.*
+
+from churn_automation_txfm2 squ
+
+where 1=1
+
+;
+
+create or replace table `ncau-cons-dev-datagenome.prstn_genome.t_subscription_churn_score_fct`
+
+clone `nau-data-nprod-dataservices.consumer_reference_data.t_subscription_churn_score_fct` 
+
+;
+
+create or replace table `ncau-cons-prd-datagenome.prstn_genome.t_subscription_churn_score_fct`
+
+clone `nau-data-nprod-dataservices.consumer_reference_data.t_subscription_churn_score_fct` 
+
+;
