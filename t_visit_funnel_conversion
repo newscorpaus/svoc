@@ -1,0 +1,51 @@
+CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_visit_funnel_conversion` (proc_end_date date, proc_week_count int64)
+begin
+
+/*
+ENG 0010.005.03 - 20240917 Clickstream Visit Funnel Conversion
+Logic for Adobe Visit based Clickstream Funnel joined to THINK Subscriptions
+Version Date: 20240917
+*/
+
+declare report_end_date date default proc_end_date; -- date(current_date('Australia/Sydney') - 1);
+declare report_days_count int64 default (7 * proc_week_count); --(7*13);
+declare report_start_date date default date_sub(report_end_date,interval report_days_count - 1 day);
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_visit_funnel_conversion`
+
+partition by visit_start_date
+
+as
+
+with visit_funnel_final
+
+as
+(
+select
+
+vfd.* except(page_view_alt_2, article_view_alt_2, article_view_alt_3)
+
+from `nau-data-nprod-dataservices.prstn_genome.t_visit_funnel_txfm3` vfd
+
+where 1=1
+and vfd.visit_start_date between report_start_date and report_end_date
+
+) 
+
+/* Query */
+
+select
+
+squ.*
+
+from 
+
+visit_funnel_final
+
+squ
+
+where 1=1
+
+;
+
+end
