@@ -1,14 +1,11 @@
-CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_visit_funnel_txfm1` (proc_end_date date, proc_week_count int64)
-begin
-
 /*
-ENG 0010.002.03 - 20240925 Clickstream Visit Funnel TXFM1
+ENG 0010.002.04 - 20240930 Clickstream Visit Funnel TXFM1
 First transformation Logic for Adobe Visit based Clickstream Funnel - rolling quarter records
-Version Date: 20240925
+Version Date: 20240930
 */
 
-declare report_end_date date default proc_end_date; -- date(current_date('Australia/Sydney') - 1);
-declare report_days_count int64 default (7 * proc_week_count); --(7*13);
+declare report_end_date date default date(current_date('Australia/Sydney') - 1);
+declare report_days_count int64 default (7*13);
 declare report_start_date date default date_sub(report_end_date,interval report_days_count - 1 day);
 
 declare partition_dates array<date> default 
@@ -565,4 +562,3 @@ squ
 where 1=1
 ;
 
-end
