@@ -1,0 +1,339 @@
+/*
+GENO 0027.001.01 - 20240717 Third Party Rolling 13 Month Daily Subscription Base & Movement
+Method to create 13 months rolling subscriber base & movement for Third Party
+Version Date: 20240717
+*/
+
+declare activity_end_date date default date(current_date('Australia/Sydney') -1);
+declare activity_start_date date default date_sub(activity_end_date, interval ((7*68)-1) day);
+declare report_start_date date default date(activity_start_date + 27);
+declare report_end_date date default date(activity_end_date);
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_third_party_subscription_daily_base_movement`
+
+partition by report_date
+
+as
+
+/*
+Subscription Base
+*/
+
+with calendar_dim 
+
+as 
+
+(
+select 
+
+cal.*
+
+from `nau-data-nprod-dataservices.consumer_reference_data.t_calendar_dim` cal
+
+where 1=1
+and cal.calendar_date between report_start_date and report_end_date
+
+)
+,
+
+/*
+Subscription Closing Base
+*/
+
+subscription_base_txfm_1 
+
+as  
+
+(
+select 
+
+'subscriber' as member_type
+, psb.dw_subscriber_party_id
+, psb.subscriber_id_src
+, psb.subscription_source_system_code
+, psb.masthead
+, psb.rate_plan_code
+, psb.delivery_medium_type
+, psb.classification_level_1
+, psb.classification_level_2
+, psb.is_paying_flag
+, cty.customer_type
+, psb.sold_in_channel
+, psb.sold_in_source_code
+, psb.sold_in_source_referrer
+, psb.offer_category_name
+, psb.frontbook_backbook_group_name
+, psb.local_brand_name
+, psb.local_publication_name
+, psb.hyper_local_brand_name
+, psb.hyper_local_publication_name
+, psb.subscription_id_src
+, psb.dw_effective_start_datetime
+, psb.dw_effective_end_datetime
+, psb.subscription_count
+
+from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_base` psb
+
+inner join `nau-data-nprod-dataservices.reference_data_genome.t_customer_type` cty
+on psb.classification_level_2 = cty.classification_level_2
+and date(current_date('Australia/Sydney') -1) between cty.start_date and cty.end_date
+
+where 1=1
+and psb.dw_source_system_code in('APLS','GPLA')
+
+)
+, 
+
+subscription_base_txfm_2
+
+as
+
+(
+select 
+
+cal.calendar_date as report_date
+, tx1.member_type
+, tx1.subscription_source_system_code
+, tx1.masthead
+, tx1.rate_plan_code
+, tx1.delivery_medium_type
+, tx1.classification_level_1
+, tx1.classification_level_2
+, tx1.is_paying_flag
+, tx1.customer_type
+, tx1.sold_in_channel
+, tx1.sold_in_source_code
+, tx1.sold_in_source_referrer
+, tx1.offer_category_name
+, tx1.frontbook_backbook_group_name
+, tx1.local_brand_name
+, tx1.local_publication_name
+, tx1.hyper_local_brand_name
+, tx1.hyper_local_publication_name
+, sum(tx1.subscription_count) as subscription_count
+
+from subscription_base_txfm_1 tx1
+
+inner join calendar_dim cal
+on cal.calendar_date between cast(tx1.dw_effective_start_datetime as date) and cast(tx1.dw_effective_end_datetime as date)
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
+)
+
+/*
+Subscription Movement
+*/
+,
+subscription_movement_txfm_1 
+
+as  
+
+(
+select 
+
+'subscriber' as member_type
+, psm.dw_subscriber_party_id
+, psm.subscriber_id_src
+, psm.subscription_source_system_code
+, psm.masthead
+, psm.rate_plan_code
+, psm.delivery_medium_type
+, psm.classification_level_1
+, psm.classification_level_2
+, psm.is_paying_flag
+, cty.customer_type
+, psm.sold_in_channel
+, psm.sold_in_source_code
+, psm.sold_in_source_referrer
+, psm.offer_category_name
+, psm.frontbook_backbook_group_name
+, psm.local_brand_name
+, psm.local_publication_name
+, psm.hyper_local_brand_name
+, psm.hyper_local_publication_name
+, psm.subscription_id_src
+, psm.movement_datetime
+, case when psm.movement_type_code = 'from' then date_add(cast(psm.movement_datetime as date), interval 1 day) else cast(psm.movement_datetime as date) end as movement_report_date
+, psm.subscription_movement_count
+, psm.movement_type_code
+, psm.subscription_movement_count_type
+, psm.subscription_movement_count_sub_type
+
+from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_movement` psm
+
+inner join `nau-data-nprod-dataservices.reference_data_genome.t_customer_type` cty
+on psm.classification_level_2 = cty.classification_level_2
+and date(current_date('Australia/Sydney') -1) between cty.start_date and cty.end_date
+
+where 1=1
+and psm.dw_source_system_code in('APLS','GPLA')
+
+)
+, 
+
+subscription_movement_txfm_2
+
+as
+
+(
+select 
+
+cal.calendar_date as report_date
+, tx1.member_type
+, tx1.subscription_source_system_code
+, tx1.masthead
+, tx1.rate_plan_code
+, tx1.delivery_medium_type
+, tx1.classification_level_1
+, tx1.classification_level_2
+, tx1.is_paying_flag
+, tx1.customer_type
+, tx1.sold_in_channel
+, tx1.sold_in_source_code
+, tx1.sold_in_source_referrer
+, tx1.offer_category_name
+, tx1.frontbook_backbook_group_name
+, tx1.local_brand_name
+, tx1.local_publication_name
+, tx1.hyper_local_brand_name
+, tx1.hyper_local_publication_name
+
+/* Subscription Movement Fields */
+
+, sum(case when tx1.subscription_movement_count_type = 'acquisition' then tx1.subscription_movement_count else 0 end) as detail_subscription_acquisition_count 
+, sum(case when tx1.subscription_movement_count_type = 'cancellation' then tx1.subscription_movement_count else 0 end) as detail_subscription_cancellation_count 
+, sum(case when tx1.subscription_movement_count_type = 'rate_plan_movement' and tx1.movement_type_code = 'to' then tx1.subscription_movement_count else 0 end) as detail_subscription_rate_plan_movement_to_count 
+, sum(case when tx1.subscription_movement_count_type = 'rate_plan_movement' and tx1.movement_type_code = 'from' then tx1.subscription_movement_count else 0 end) as detail_subscription_rate_plan_movement_from_count 
+
+from subscription_movement_txfm_1 tx1
+
+inner join calendar_dim cal
+on cal.calendar_date = cast(tx1.movement_report_date as date) 
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
+)
+, 
+
+base_movement_txfm_1
+
+as
+
+(
+select 
+
+lv1.report_date
+, lv1.member_type
+, lv1.subscription_source_system_code
+, lv1.masthead
+, lv1.rate_plan_code
+, lv1.delivery_medium_type
+, lv1.classification_level_1
+, lv1.classification_level_2
+, lv1.is_paying_flag
+, lv1.customer_type
+, lv1.sold_in_channel
+, lv1.sold_in_source_code
+, lv1.sold_in_source_referrer
+, lv1.offer_category_name
+, lv1.frontbook_backbook_group_name
+, lv1.local_brand_name
+, lv1.local_publication_name
+, lv1.hyper_local_brand_name
+, lv1.hyper_local_publication_name
+, sum(lv1.subscription_count) as subscription_count
+, sum(lv1.detail_subscription_acquisition_count) as detail_subscription_acquisition_count
+, sum(lv1.detail_subscription_cancellation_count) as detail_subscription_cancellation_count
+, sum(lv1.detail_subscription_rate_plan_movement_to_count) as detail_subscription_rate_plan_movement_to_count
+, sum(lv1.detail_subscription_rate_plan_movement_from_count) as detail_subscription_rate_plan_movement_from_count
+
+from
+
+(
+select 
+
+sb.report_date
+, sb.member_type
+, sb.subscription_source_system_code
+, sb.masthead
+, sb.rate_plan_code
+, sb.delivery_medium_type
+, sb.classification_level_1
+, sb.classification_level_2
+, sb.is_paying_flag
+, sb.customer_type
+, sb.sold_in_channel
+, sb.sold_in_source_code
+, sb.sold_in_source_referrer
+, sb.offer_category_name
+, sb.frontbook_backbook_group_name
+, sb.local_brand_name
+, sb.local_publication_name
+, sb.hyper_local_brand_name
+, sb.hyper_local_publication_name
+, sb.subscription_count
+, 0 as detail_subscription_acquisition_count
+, 0 as detail_subscription_cancellation_count
+, 0 as detail_subscription_rate_plan_movement_to_count
+, 0 as detail_subscription_rate_plan_movement_from_count
+
+from subscription_base_txfm_2 sb
+
+where 1=1
+
+union all 
+
+select 
+
+sm.report_date
+, sm.member_type
+, sm.subscription_source_system_code
+, sm.masthead
+, sm.rate_plan_code
+, sm.delivery_medium_type
+, sm.classification_level_1
+, sm.classification_level_2
+, sm.is_paying_flag
+, sm.customer_type
+, sm.sold_in_channel
+, sm.sold_in_source_code
+, sm.sold_in_source_referrer
+, sm.offer_category_name
+, sm.frontbook_backbook_group_name
+, sm.local_brand_name
+, sm.local_publication_name
+, sm.hyper_local_brand_name
+, sm.hyper_local_publication_name
+, 0 as subscription_count
+, sm.detail_subscription_acquisition_count
+, sm.detail_subscription_cancellation_count
+, sm.detail_subscription_rate_plan_movement_to_count
+, sm.detail_subscription_rate_plan_movement_from_count
+
+from subscription_movement_txfm_2 sm
+
+where 1=1
+
+) lv1
+
+where 1=1
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
+
+)
+
+-- Query
+
+select 
+
+squ.*
+
+from base_movement_txfm_1 squ
+
+where 1=1
+
+;
+
