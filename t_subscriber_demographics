@@ -1,7 +1,11 @@
+CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_subscriber_demographics` ()
+
+begin
+
 /*
-GENO 0028.001.01 - 20240724 Creates Subscriber Demographics
+GENO 0028.001.02 - 2024930 Creates Subscriber Demographics
 Creates Single record for Subscribe DemographicsIncludes Lapsed Subscribers
-Version Date: 20240724
+Version Date: 20240930
 */
 
 declare csa_pt_date array<date> default
@@ -167,3 +171,5 @@ from subscriber_demographics squ
 where 1=1
 
 ;
+
+end
