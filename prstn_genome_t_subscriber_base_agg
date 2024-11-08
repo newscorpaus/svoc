@@ -1,12 +1,16 @@
+-- CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_subscriber_base_agg` ()
+
+-- begin
+
 /*
-GENO 0034.002.01 - 20240906 Create Genome PRSTN Subscriber Base Agg
+GENO 0034.002.03 - 20241105 Create Genome PRSTN Subscriber Base Agg
 Includes Lapsed Subscribers
 Includes Last Content Segment
 Excludes "Print-only"
-Version Date: 20240906
+Version Date: 20241105
 */
 
-create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base_agg_test`
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base_agg`
 
 partition by report_date
 
@@ -22,13 +26,20 @@ as
 select 
 
 ces.report_date_name
-, ces.report_date
+, ces.base_date
 , ces.subscriber_id_src
 , ces.member_type
 , ces.subscriber_last_28_days_active_days
+, ces.subscriber_last_28_days_active_weeks_count
+, ces.subscriber_last_28_days_active_yesterday_count                      
+, ces.subscriber_last_28_days_app_active_days
 , ces.subscriber_last_28_days_visit_count
 , ces.subscriber_last_28_days_page_view_count
 , ces.subscriber_last_28_days_article_view_count
+, ces.subscriber_last_28_days_my_account_page_view_count
+, ces.subscriber_last_28_days_my_account_active_days_count
+, ces.subscriber_last_28_days_recency
+, ces.subscriber_last_28_days_dpe_page_view_count
 , ces.combined_top_5_site_section_last_28_days
 , ces.combined_site_section_last_28_days_page_view_count
 , ces.subscriber_top_5_site_section_details
@@ -38,6 +49,18 @@ ces.report_date_name
 , ces.combined_top_5_device_type_last_28_days
 , ces.combined_device_type_last_28_days_page_view_count
 , ces.subscriber_top_5_device_type_details
+, ces.combined_top_5_brand_last_28_days
+, ces.combined_brand_last_28_days_page_view_count
+, ces.subscriber_top_5_brand_details
+, ces.combined_top_5_brand_section_last_28_days
+, ces.combined_brand_section_last_28_days_page_view_count
+, ces.subscriber_top_5_brand_section_details
+, ces.combined_top_5_brand_section_excl_last_28_days
+, ces.combined_brand_section_excl_last_28_days_page_view_count
+, ces.subscriber_top_5_brand_section_excl_details
+, ces.combined_top_3_myaccount_section_last_28_days
+, ces.combined_myaccount_section_last_28_days_page_view_count
+, ces.subscriber_top_3_myaccount_section_details
 
 from `nau-data-nprod-dataservices.prstn_genome.t_subscriber_consumption_events_staging`  ces
 
@@ -79,6 +102,10 @@ lv1.*
 , se.subscriber_top_5_site_section_details
 , se.subscriber_top_5_source_code_details
 , se.subscriber_top_5_device_type_details
+, se.subscriber_top_5_brand_details
+, se.subscriber_top_5_brand_section_details
+, se.subscriber_top_5_brand_section_excl_details
+, se.subscriber_top_3_myaccount_section_details
 
 from
 (
@@ -117,9 +144,16 @@ sv.report_date_name
 , sv.subscriber_credit_demand
 , sv.subscriber_postcode
 , sv.subscriber_last_28_days_active_days
+, sv.subscriber_last_28_days_active_weeks_count
+, sv.subscriber_last_28_days_active_yesterday_count                      
+, sv.subscriber_last_28_days_app_active_days
 , sv.subscriber_last_28_days_visit_count
 , sv.subscriber_last_28_days_page_view_count
 , sv.subscriber_last_28_days_article_view_count
+, sv.subscriber_last_28_days_my_account_page_view_count
+, sv.subscriber_last_28_days_my_account_active_days_count
+, sv.subscriber_last_28_days_recency
+, sv.subscriber_last_28_days_dpe_page_view_count
 , sv.subscriber_engagement_pv_cohort_order
 , sv.subscriber_engagement_pv_cohort_group
 , sv.combined_top_5_site_section_last_28_days
@@ -128,10 +162,14 @@ sv.report_date_name
 , sv.combined_source_code_last_28_days_page_view_count
 , sv.combined_top_5_device_type_last_28_days
 , sv.combined_device_type_last_28_days_page_view_count
+, sv.combined_top_5_brand_last_28_days
+, sv.combined_brand_last_28_days_page_view_count
 , sv.subscriber_highest_shap_mapped
 , sv.subscriber_highest_churn_score
 , sv.subscriber_highest_churn_score_group
 , sv.subscriber_highest_churn_score_group_order
+, sv.subscriber_highest_churn_propensity
+, sv.intro_offer_count
 , array_to_string(array_agg(distinct sv.subscription_status_code order by sv.subscription_status_code),', ') as combined_subscription_status_code
 , array_to_string(array_agg(distinct sv.dw_publication_id order by sv.dw_publication_id),', ') as combined_dw_publication_id
 , array_to_string(array_agg(distinct sv.dw_rate_plan_id order by sv.dw_rate_plan_id),', ') as combined_dw_rate_plan_id
@@ -180,14 +218,14 @@ from subscriber_base sv
 
 where 1=1 
 
-group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59
 
 ) lv1
 
 left outer join subscriber_engagement se
 on cast(lv1.subscriber_id_src as string) = cast(se.subscriber_id_src as string)
 and lv1.report_date_name = se.report_date_name
-and lv1.report_date = se.report_date
+and lv1.report_date = se.base_date
 and lv1.member_type = se.member_type
 
 where 1=1
@@ -208,3 +246,4 @@ where 1=1
 
 ;
 
+-- end
