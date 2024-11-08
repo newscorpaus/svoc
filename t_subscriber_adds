@@ -1,15 +1,19 @@
 /*
-GENO 0020.001.04 - 20240827 Genome Adds Detail
+GENO 0020.001.05 - 20241029 Genome Adds Detail
 Includes Lapsed Subscribers
 Excludes "Print-only"
-Version Date: 20240827
+Version Date: 20241029
 */
 
 /* Report Run Date */
 
 declare dashboard_run_date date default date(current_date('Australia/Sydney') - 1);
 
-create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_adds_test`
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_adds`
+
+partition by dw_partition_date
+
+cluster by subscriber_movement_datetime, subscriber_id_src, combined_rate_plan_code, combined_rate_plan_description
 
 as
 
@@ -467,10 +471,11 @@ select
 , tx4.subscriber_individual_age
 , tx4.subscriber_affluence_desc
 
-/* Subscriber Fields */
+/* Date Fields */
 
-, cast(tx4.subscriber_movement_datetime as date) as subscriber_movement_date 
-, coalesce(oc.offer_category_group,'Not Available') as offer_category_group
+, cast(tx4.subscriber_movement_datetime as date) as dw_partition_date
+, cast(tx4.subscriber_movement_datetime as date) as subscriber_movement_date
+-- , cast(tx4.subscriber_movement_datetime as date) + (7 - extract(dayofweek from cast(tx4.subscriber_movement_datetime as date))) as alt_dw_partition_date 
 
 /* Combined Dimensions */
 
@@ -528,6 +533,7 @@ select
         , tx4.rate_plan_description
         , tx4.offer_category_name
         , tx4.offer_category_group_name
+        , coalesce(oc.offer_category_group,'Not Available') as offer_category_group
         , tx4.frontbook_backbook_group_name
         , tx4.delivery_medium_type
         , tx4.delivery_schedule_group
@@ -582,7 +588,7 @@ select
         when coalesce(tx4.sold_in_source_referrer, 'Not Available') = 'Not Available' then '5) Other Source Channels'
         else '4) Other Referrer' end as visit_referrer_group_alt
 , case when tx4.sold_in_source_referrer in('Not Available','Newsletter') then '1) Direct'
-        when tx4.sold_in_source_referrer in('Google+','Google AMP','Google') then '2) Search'
+        when tx4.sold_in_source_referrer in('Google+','Google AMP','Google') then '2) Search & News Agg'
         when tx4.sold_in_source_referrer in('LinkedIn','Facebook','Facebook Messenger Bot','Reddit') then '3) Social'
         when coalesce(tx4.sold_in_source_referrer, 'Blank') = 'Blank' then '5) Other Source Channels'
         else '4) Other Referrer' end as visit_referrer_group
@@ -603,8 +609,10 @@ on tx4.subscriber_mosaic_title = mos.mosaic_group_name
 where 1=1
 and tx4.masthead not in('SN')
 and tx4.classification_level_2 not in('Print-only')
+and cast(tx4.subscriber_movement_datetime as date) between date(current_date('Australia/Sydney') - ((365 *3) - 1)) and date(current_date('Australia/Sydney') - 1)
 
-group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24
 
 )
 
