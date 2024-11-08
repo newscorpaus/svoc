@@ -1,0 +1,203 @@
+CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_visit_funnel_txfm2` (proc_end_date date, proc_week_count int64)
+begin
+
+/*
+ENG 0010.003.03 - 20240925 Clickstream Visit Funnel TXFM2
+First transformation Logic for Adobe Visit based Clickstream Funnel - rolling quarter records
+Version Date: 20240925
+*/
+
+declare report_end_date date default proc_end_date; -- date(current_date('Australia/Sydney') - 1);
+declare report_days_count int64 default (7 * proc_week_count); --(7*13);
+declare report_start_date date default date_sub(report_end_date,interval report_days_count - 1 day);
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_visit_funnel_txfm2`
+
+partition by visit_start_date
+
+cluster by visit_start_datetime, visit_referrer, source_code_id
+
+as
+
+with relative_calendar_dim
+
+as
+
+(
+select 
+
+cal.calendar_date as report_date
+, report_start_date - 1 as activity_start_date
+, report_end_date as activity_end_date
+, row_number() over(partition by 1 order by cal.calendar_date asc) as calendar_record_order
+
+from `nau-data-nprod-dataservices.consumer_reference_data.t_calendar_dim` cal
+
+where 1=1
+and cast(cal.calendar_date as date) between report_start_date - 1 and report_end_date
+
+group by 1
+
+)
+, 
+
+subscriber_fact
+
+as
+
+(
+select 
+
+lv2.*
+, case when lv2.combined_is_paying_flag like ('%Y%') then 'subscriber'
+        when lv2.combined_is_paying_flag = ('N') and lv2.prior_lifetime_paying_flag = 1 then 'premium_registered' 
+        when lv2.combined_is_paying_flag = ('N') and lv2.prior_lifetime_paying_flag = 0 then 'registered' 
+      end as visit_member_type
+
+from
+(
+select 
+
+lv1.subscriber_id_src
+, lv1.dw_subscriber_start_datetime
+, lv1.dw_subscriber_end_datetime 
+, lv1.combined_is_paying_flag
+, row_number() over(partition by lv1.subscriber_id_src order by lv1.dw_subscriber_start_datetime desc) as subscriber_record_order
+, max(case when lv1.combined_is_paying_flag like ('%Y%') then 1 else 0 end) over(partition by lv1.subscriber_id_src) as lifetime_paying_flag 
+, max(case when lv1.combined_is_paying_flag like ('%Y%') then 1 else 0 end) over(partition by lv1.subscriber_id_src order by lv1.dw_subscriber_start_datetime rows between unbounded preceding and  current row) as prior_lifetime_paying_flag 
+, case when lv1.combined_is_paying_flag like ('%Y%') then 1 else 0 end as current_is_paying_flag
+
+, min(lv1.dw_subscriber_start_datetime) over(partition by lv1.subscriber_id_src) as first_known_start_datetime
+
+from
+(
+select 
+
+suf.subscriber_id_src
+, suf.dw_subscriber_start_datetime
+, suf.dw_subscriber_end_datetime 
+, array_to_string(array_agg(distinct suf.is_paying_flag order by suf.is_paying_flag),', ') as combined_is_paying_flag
+
+from `nau-data-nprod-dataservices.bdm_genome.t_subscriber_base_fct_staging` suf
+
+where 1=1
+and suf.member_type = 'combined'
+and cast(suf.dw_subscriber_start_datetime as date) <= report_end_date
+group by 1,2,3
+
+
+) lv1
+
+where 1=1
+
+) lv2
+
+where 1=1
+)
+, 
+
+visit_joined_detail
+
+as
+
+(
+select 
+
+ved.source_code
+, ved.visit_id
+, ved.source_visit_id
+, coalesce(cast(suf.subscriber_id_src as string),'-1') as subscriber_id_src
+, ved.visit_start_datetime
+, ved.visit_start_date
+, ved.visit_end_datetime
+, ved.visit_end_date
+, ved.au_activity_datetime
+, ved.page_view_order
+, ved.visit_referrer_domain
+, ved.visit_referrer
+, ved.member_type
+, ved.device_type
+, ved.source_code_id
+, ved.source_code_group
+
+, case when coalesce(cast(suf.subscriber_id_src as string),'-1') = '-1' then 'anonymous'
+        else suf.visit_member_type
+      end as subscriber_visit_member_type
+, case when coalesce(cast(suf2.subscriber_id_src as string),'-1') = '-1' then 'anonymous'
+        else suf2.visit_member_type
+      end as subscriber_member_type
+, case when coalesce(cast(suf3.subscriber_id_src as string),'-1') = '-1' then 'anonymous'
+        else suf3.visit_member_type
+      end as prior_subscriber_member_type
+
+, suf.subscriber_id_src as suf_subscriber_id_src
+, suf.combined_is_paying_flag as suf_combined_is_paying_flag
+, suf.lifetime_paying_flag as suf_lifetime_paying_flag
+, suf.subscriber_record_order as suf_subscriber_record_order
+, suf2.subscriber_id_src  as suf2_subscriber_id_src
+, suf2.combined_is_paying_flag as suf2_combined_is_paying_flag
+, suf2.lifetime_paying_flag  as suf2_lifetime_paying_flag
+, suf2.subscriber_record_order as suf2_subscriber_record_order
+, ved.brand
+, ved.masthead
+, ved.section1
+, ved.section2
+, ved.section3
+, ved.page_type
+, ved.page_url
+, ved.page_view
+, ved.page_view_alt_1
+, ved.page_view_alt_2
+, ved.article_view
+, ved.article_view_alt_1
+, ved.article_view_alt_2
+, ved.article_view_alt_3
+, ved.breach_view_flag
+, ved.subscription_signup_start_flag
+, ved.subscription_signup_complete_flag
+, ved.direct_shop_front_flag
+, ved.shopfront_activity_flag
+, ved.min_subscription_sign_up_activity_date
+, ved.max_subscription_sign_up_activity_date
+, case when ved.page_view = 1 then lead(ved.au_activity_datetime) over(partition by ved.source_visit_id, ved.page_view order by ved.page_view_order asc) end as next_visit_start_datetime
+, case when ved.page_view = 1 then date_diff(lead(ved.au_activity_datetime) over(partition by ved.source_visit_id, ved.page_view order by ved.page_view_order asc), ved.au_activity_datetime, second) end as seconds_spent
+, case when ved.page_view = 0 and date_diff(lead(ved.au_activity_datetime) over(partition by ved.source_visit_id, ved.page_view order by ved.page_view_order asc), ved.au_activity_datetime, second) is null then 0 else ved.page_view end as page_views_with_seconds_spent 
+
+from `nau-data-nprod-dataservices.prstn_genome.t_visit_funnel_txfm1` ved
+
+left outer join subscriber_fact suf
+on cast(ved.subscriber_id_src as string) = cast(suf.subscriber_id_src as string)
+and cast(ved.visit_start_date as date) between cast(suf.dw_subscriber_start_datetime as date) and cast(suf.dw_subscriber_end_datetime as date)
+
+left outer join subscriber_fact suf2
+on cast(ved.subscriber_id_src as string) = cast(suf2.subscriber_id_src as string)
+--and cast(suf2.first_known_start_datetime as date) <= cast(ved.visit_start_date as date)
+and suf2.subscriber_record_order = 1
+
+left outer join subscriber_fact suf3
+on cast(ved.subscriber_id_src as string) = cast(suf3.subscriber_id_src as string)
+and date_sub(cast(ved.visit_start_date as date), interval 1 day) between cast(suf3.dw_subscriber_start_datetime as date) and cast(suf3.dw_subscriber_end_datetime as date)
+
+where 1=1
+and ved.visit_start_date between report_start_date and report_end_date
+
+)
+
+/* Query */ 
+
+
+select 
+
+squ.*
+
+from 
+
+visit_joined_detail
+
+squ
+
+where 1=1
+
+;
+
+end
