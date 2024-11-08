@@ -1,16 +1,19 @@
+-- CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_subscriber_base` ()
+
+-- begin
 /*
-GENO 0034.001.01 - 20240906 Create Genome PRSTN Subscriber Base
+GENO 0034.001.03 - 20241105 Create Genome PRSTN Subscriber Base
 Includes Lapsed Subscribers
 Includes Last Content Segment
 Excludes "Print-only"
-Version Date: 20240906
+Version Date: 20241105
 */
 
 declare report_date date default cast(current_date('Australia/Sydney') - 1 as date);
 declare last_week_flag int64 default 1;
 declare last_fy_flag int64 default 1;
 
-create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base_test` 
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_base` 
 
 partition by report_date
 
@@ -60,6 +63,22 @@ where 1=1
 
 )
 ,
+offer_category
+
+as
+
+(
+select 
+
+ocd.*
+
+from `nau-data-nprod-dataservices.reference_data_genome.t_offer_category_dim` ocd
+
+where 1=1
+and report_date between cast(ocd.start_date as date) and cast(ocd.end_date as date) 
+
+)
+,
 
 subscriber_fct
 
@@ -87,8 +106,6 @@ select
 suf.*
 , min(cast(suf.dw_subscriber_start_datetime as date)) over(partition by suf.member_type, suf.subscriber_id_src, suf.subscriber_tenure_order) as subscriber_tenure_partition_start_date
 , min(suf.dw_subscriber_start_datetime ) over(partition by suf.subscriber_id_src) as subscriber_known_from_date
-
-
 
 from `nau-data-nprod-dataservices.bdm_genome.t_subscriber_base_fct_staging` suf
 
@@ -118,6 +135,11 @@ chu.*
         when chu.highest_shap_mapped = 'shap_frequency' then 'Frequency'
         else 'Not Available'
         end as clean_highest_shap_mapped
+, case when chu.churn_score > 0.7 then 'high'
+        when chu.churn_score > 0.3 and chu.churn_score <= 0.7 then 'medium'
+        when chu.churn_score >= 0 and chu.churn_score <= 0.3 then 'low'
+        else 'error' 
+end as churn_propensity
 
 from `nau-data-nprod-dataservices.consumer_reference_data.t_latest_subscription_churn_score` chu
 
@@ -134,9 +156,16 @@ as
 select 
 
 sb.*
+, oc.offer_category_group
+, nth_value(coalesce(oc.offer_category_group, 'Not Available'),1) over(partition by sb.subscription_id_src order by sb.dw_effective_start_datetime asc) as sold_in_offer_category_group
+, case when regexp_contains(nth_value(coalesce(oc.offer_category_group, 'Not Available'),1) over(partition by sb.subscription_id_src order by sb.dw_effective_start_datetime asc), 'Intro') then concat(cast(subscription_id_src as string), nth_value(coalesce(oc.offer_category_group, 'Not Available'),1) over(partition by sb.subscription_id_src order by sb.dw_effective_start_datetime asc)) end as intro_offer_id
 , row_number() over(partition by sb.subscriber_id_src order by sb.subscription_id_src) as subscriber_record_order
 
 from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_base` sb
+
+left outer join offer_category oc
+on sb.offer_category_name = oc.offer_category_name
+
 
 where 1=1
 and sb.dw_source_system_code = 'THINK'
@@ -222,13 +251,20 @@ as
 select 
 
 ces.report_date_name
-, ces.report_date
+, ces.base_date
 , ces.subscriber_id_src
 , ces.member_type
 , ces.subscriber_last_28_days_active_days
+, ces.subscriber_last_28_days_active_weeks_count
+, ces.subscriber_last_28_days_active_yesterday_count                      
+, ces.subscriber_last_28_days_app_active_days
 , ces.subscriber_last_28_days_visit_count
 , ces.subscriber_last_28_days_page_view_count
 , ces.subscriber_last_28_days_article_view_count
+, ces.subscriber_last_28_days_my_account_page_view_count
+, ces.subscriber_last_28_days_my_account_active_days_count
+, ces.subscriber_last_28_days_recency
+, ces.subscriber_last_28_days_dpe_page_view_count
 , ces.combined_top_5_site_section_last_28_days
 , ces.combined_site_section_last_28_days_page_view_count
 , ces.subscriber_top_5_site_section_details
@@ -238,6 +274,18 @@ ces.report_date_name
 , ces.combined_top_5_device_type_last_28_days
 , ces.combined_device_type_last_28_days_page_view_count
 , ces.subscriber_top_5_device_type_details
+, ces.combined_top_5_brand_last_28_days
+, ces.combined_brand_last_28_days_page_view_count
+, ces.subscriber_top_5_brand_details
+, ces.combined_top_5_brand_section_last_28_days
+, ces.combined_brand_section_last_28_days_page_view_count
+, ces.subscriber_top_5_brand_section_details
+, ces.combined_top_5_brand_section_excl_last_28_days
+, ces.combined_brand_section_excl_last_28_days_page_view_count
+, ces.subscriber_top_5_brand_section_excl_details
+, ces.combined_top_3_myaccount_section_last_28_days
+, ces.combined_myaccount_section_last_28_days_page_view_count
+, ces.subscriber_top_3_myaccount_section_details
 
 from `nau-data-nprod-dataservices.prstn_genome.t_subscriber_consumption_events_staging`  ces
 
@@ -251,6 +299,7 @@ subscriber_demographics
 as
 
 (
+
 select 
 
 sd.*
@@ -330,6 +379,7 @@ sf.report_date_name
 , coalesce(cd.churn_score, -1) as churn_score
 , nth_value(coalesce(cd.clean_highest_shap_mapped, 'Not Available'),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_shap_mapped
 , nth_value(coalesce(cd.churn_score, -1),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score
+, nth_value(coalesce(cd.churn_propensity,  'Not Available'),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_propensity
 , nth_value(coalesce(cd.churn_score_group, 'Not Available'),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score_group
 , nth_value(coalesce(cd.churn_score_group_order, -1),1) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src order by coalesce(cd.churn_score, -1) desc) as subscriber_highest_churn_score_group_order
 , coalesce(cd.churn_score_group_order, -1) as churn_score_group_order
@@ -343,6 +393,8 @@ sf.report_date_name
 , sb.rate_plan_description
 , sb.offer_category_name
 , sb.offer_category_group_name
+, sb.offer_category_group
+, coalesce(count(distinct sb.intro_offer_id) over(partition by sf.subscriber_id_src),0) as intro_offer_count
 , sb.frontbook_backbook_group_name
 , sb.delivery_medium_type
 , sb.delivery_schedule_group
@@ -379,9 +431,16 @@ sf.report_date_name
 , coalesce(sd.credit_demand, 'Not Available') as subscriber_credit_demand
 , sb.subscriber_zip as subscriber_postcode
 , se.subscriber_last_28_days_active_days
+, se.subscriber_last_28_days_active_weeks_count
+, se.subscriber_last_28_days_active_yesterday_count                      
+, se.subscriber_last_28_days_app_active_days
 , se.subscriber_last_28_days_visit_count
 , se.subscriber_last_28_days_page_view_count
 , se.subscriber_last_28_days_article_view_count
+, se.subscriber_last_28_days_my_account_page_view_count
+, se.subscriber_last_28_days_my_account_active_days_count
+, se.subscriber_last_28_days_recency
+, se.subscriber_last_28_days_dpe_page_view_count
 , case 
     when se.subscriber_last_28_days_page_view_count = 0 then 1
     when se.subscriber_last_28_days_page_view_count between 1 and 50 then 2
@@ -403,6 +462,18 @@ sf.report_date_name
 , se.combined_top_5_device_type_last_28_days
 , se.combined_device_type_last_28_days_page_view_count
 , se.subscriber_top_5_device_type_details
+, se.combined_top_5_brand_last_28_days
+, se.combined_brand_last_28_days_page_view_count
+, se.subscriber_top_5_brand_details
+, se.combined_top_5_brand_section_last_28_days
+, se.combined_brand_section_last_28_days_page_view_count
+, se.subscriber_top_5_brand_section_details
+, se.combined_top_5_brand_section_excl_last_28_days
+, se.combined_brand_section_excl_last_28_days_page_view_count
+, se.subscriber_top_5_brand_section_excl_details
+, se.combined_top_3_myaccount_section_last_28_days
+, se.combined_myaccount_section_last_28_days_page_view_count
+, se.subscriber_top_3_myaccount_section_details
 , count(distinct sf.subscription_id_src) over(partition by sf.report_date_name, sf.report_date, sf.member_type, sf.subscriber_id_src) as subscription_held_count
 
 from subscriber_fct sf
@@ -433,7 +504,7 @@ and sf.dw_effective_start_datetime = sb.dw_effective_start_datetime
 left outer join subscriber_engagement se
 on cast(sf.subscriber_id_src as string) = cast(se.subscriber_id_src as string)
 and sf.report_date_name = se.report_date_name
-and sf.report_date = se.report_date
+and sf.report_date = se.base_date
 and sf.member_type = se.member_type
 
 left outer join subscriber_demographics sd
@@ -482,3 +553,4 @@ where 1=1
 
 ;
 
+-- end
