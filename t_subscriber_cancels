@@ -1,0 +1,644 @@
+/*
+GENO 0020.002.05 - 20240828 Genome Cancels Detail
+Includes Lapsed Subscribers
+Excludes "Print-only"
+Version Date: 20240828
+*/
+
+/* Report Run Date */
+
+declare dashboard_run_date date default date(current_date('Australia/Sydney') - 1);
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_cancels_test`
+
+partition by dw_partition_date
+
+cluster by subscriber_movement_datetime, subscriber_id_src, combined_rate_plan_code, combined_rate_plan_description
+
+as
+
+with subscriber_movement
+
+as
+
+(
+select 
+
+mfs.*
+, min(mfs.subscriber_movement_datetime) over(partition by mfs.subscriber_id_src) as subscriber_first_start_date
+, min(mfs.dw_effective_start_datetime) over(partition by mfs.subscription_id_src) as subscription_first_start_date
+
+from `nau-data-nprod-dataservices.bdm_genome.t_subscriber_movement_fct_staging` mfs
+
+where 1=1
+
+)
+, 
+
+subscriber_base
+
+as
+
+(
+select 
+
+bfs.*
+
+from `nau-data-nprod-dataservices.bdm_genome.t_subscriber_base_fct_staging` bfs
+
+where 1=1
+
+)
+, 
+
+prstn_subscription_base
+
+as
+
+(
+select 
+
+psb.*
+
+from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_base` psb
+
+where 1=1
+)
+, 
+
+prstn_subscription_movement
+
+as
+
+(
+select 
+
+psb.*
+
+from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_movement` psb
+
+where 1=1
+)
+,
+
+masthead_dim
+
+as
+
+(
+select 
+
+md.*
+
+from `nau-data-nprod-dataservices.reference_data_genome.t_masthead_dim` md
+
+where 1=1
+
+)
+,
+
+offer_category
+
+as
+
+(
+select 
+
+ocd.*
+
+from `nau-data-nprod-dataservices.reference_data_genome.t_offer_category_dim` ocd
+
+where 1=1
+and dashboard_run_date between cast(ocd.start_date as date) and cast(ocd.end_date as date) 
+
+)
+, 
+
+mosaic_reference_data
+
+as
+
+(
+select 
+
+mos.mosaic_group_name
+, mos.mosaic_class
+
+from `nau-data-nprod-dataservices.reference_data_genome.t_mosaic_dim` mos
+
+where 1=1
+and dashboard_run_date between cast(mos.start_date as date) and cast(mos.end_date as date) 
+
+group by 1,2
+
+)
+, 
+
+subscriber_cancels_txfm1
+
+as
+
+(
+select 
+
+sb.member_type
+, sb.dw_subscriber_party_id
+, sb.subscriber_id_src
+, sb.subscriber_tenure_order
+, sb.dw_subscriber_start_datetime
+, sb.dw_subscriber_end_datetime
+, sb.dw_subscriber_base_date
+, sb.subscriber_count
+, sb.active_subscriber_count
+, sb.subscriber_status_code
+, sb.subscription_source_system_code
+, sb.dw_subscription_id
+, sb.subscription_id_src
+, sb.subscription_status_code
+, sb.dw_publication_id
+, sb.dw_rate_plan_id
+, sb.subscription_count
+, sb.is_paying_flag
+, sb.customer_type
+, sb.prior_subscription_registration_flag
+, sb.prior_paid_subscription_flag
+, sb.prior_registration_flag
+, sb.dw_effective_start_datetime
+, sb.dw_effective_end_datetime
+, psb.masthead
+, md.masthead_long_name
+, psb.rate_plan_code
+, psb.rate_plan_description
+, psb.offer_category_name
+, psb.offer_category_group_name
+, psb.frontbook_backbook_group_name
+, psb.delivery_medium_type
+, psb.delivery_schedule_group
+, psb.delivery_schedule_days
+, psb.classification_level_1
+, psb.classification_level_2
+, psb.contract_offer_code
+, psb.contract_offer_code_description
+, psb.ratecard_price
+, psb.adjusted_weekly_price
+, psb.is_corporate_b2b_flag
+, psb.is_bundle
+, psb.v21_paywall_breach_code
+, psb.local_publication_name
+, psb.local_brand_name
+, psb.hyper_local_publication_name
+, psb.hyper_local_brand_name
+, psb.sold_in_rate_plan_code
+, psb.sold_in_payment_amount
+, psb.sold_in_source
+, psb.sold_in_source_code
+, psb.sold_in_source_referrer
+, psb.sold_in_source_channel
+, psb.sold_in_channel
+, psb.subscription_term_amount
+, psb.term_period_name
+, psb.subscriber_individual_gender
+, psb.subscriber_lifestage_desc
+, psb.subscriber_household_income_desc
+, psb.subscriber_mosaic_type
+, psb.subscriber_mosaic_title
+, psb.subscriber_individual_age
+, psb.subscriber_affluence_desc
+, psb.subscriber_zip
+
+from subscriber_base sb
+
+inner join prstn_subscription_base psb
+on cast(sb.subscription_id_src as string) = cast(psb.subscription_id_src as string)
+and cast(sb.dw_effective_start_datetime as date) = cast(psb.dw_effective_start_datetime as date)
+
+left outer join masthead_dim md
+on psb.masthead = md.masthead
+
+where 1=1
+
+)
+, 
+
+subscriber_cancels_txfm2
+
+as
+
+(
+select 
+
+tx1.member_type
+, tx1.subscriber_id_src
+, tx1.subscriber_tenure_order
+, min(tx1.dw_subscriber_start_datetime) as subscriber_tenure_start_datetime
+, max(tx1.dw_subscriber_end_datetime) as subscriber_tenure_end_datetime
+
+from subscriber_cancels_txfm1 tx1
+
+where 1=1
+
+group by 1,2,3
+)
+,
+
+subscriber_cancels_txfm3
+
+as
+
+(
+select 
+
+sm.member_type
+, sm.dw_subscriber_party_id
+, sm.subscriber_id_src
+, sm.subscriber_movement_type_code
+, sm.subscriber_tenure_order
+, sm.subscriber_movement_datetime
+, sm.dw_subscriber_movement_date
+, sm.subscriber_movement_count_type
+, sm.subscriber_movement_count
+, sm.active_subscriber_count
+, sm.subscriber_status_code
+, sm.subscription_source_system_code
+, sm.dw_subscription_id
+, sm.subscription_id_src
+, sm.subscription_status_code
+, sm.dw_publication_id
+, sm.dw_rate_plan_id
+, sm.is_paying_flag
+, sm.customer_type
+, sm.dw_effective_start_datetime
+, sm.dw_effective_end_datetime
+, sm.subscription_movement_count
+, sm.subscriber_subscription_movement_type_code
+, sm.subscriber_subscription_movement_count_type
+, sm.prior_subscription_registration_flag
+, sm.prior_paid_subscription_flag
+, sm.prior_registration_flag
+, sm.subscription_detail_movement_count_type
+, sm.subscription_detail_movement_count_sub_type
+, tx1.masthead
+, tx1.masthead_long_name
+, tx1.rate_plan_code
+, tx1.rate_plan_description
+, tx1.offer_category_name
+, tx1.offer_category_group_name
+, tx1.frontbook_backbook_group_name
+, tx1.delivery_medium_type
+, tx1.delivery_schedule_group
+, tx1.delivery_schedule_days
+, tx1.classification_level_1
+, tx1.classification_level_2
+, tx1.contract_offer_code
+, tx1.contract_offer_code_description
+, tx1.ratecard_price
+, tx1.adjusted_weekly_price
+, tx1.is_corporate_b2b_flag
+, tx1.is_bundle
+, tx1.v21_paywall_breach_code
+, tx1.local_publication_name
+, tx1.local_brand_name
+, tx1.hyper_local_publication_name
+, tx1.hyper_local_brand_name
+, tx1.sold_in_rate_plan_code
+, tx1.sold_in_payment_amount
+, tx1.sold_in_source
+, tx1.sold_in_source_code
+, tx1.sold_in_source_referrer
+, tx1.sold_in_source_channel
+, tx1.sold_in_channel
+, tx1.subscription_term_amount
+, tx1.term_period_name
+, tx1.subscriber_individual_gender
+, tx1.subscriber_lifestage_desc
+, tx1.subscriber_household_income_desc
+, tx1.subscriber_mosaic_type
+, tx1.subscriber_mosaic_title
+, tx1.subscriber_individual_age
+, tx1.subscriber_affluence_desc
+, tx1.subscriber_zip
+, tx2.subscriber_tenure_start_datetime
+, tx2.subscriber_tenure_end_datetime
+, psm.reason_code
+, psm.reason_description
+, psm.cancel_reason_parent_group
+, psm.cancel_reason_group
+, psm.cancel_reason_exclude_flag
+
+-- Flag Logic
+
+, case when sm.subscription_detail_movement_count_sub_type in('cancellation') then 'Y' else 'N' end as is_cancel_flag
+, case when sm.subscription_detail_movement_count_sub_type in('switch_cancellation') then 'Y' else 'N' end as is_switch_flag
+, case when sm.subscription_detail_movement_count_sub_type in('reactivation_30day_cancellation') then 'Y' else 'N' end as is_reactivation_flag
+, case when psm.cancel_reason_parent_group in('Failed Payment') then 'involuntary' else 'voluntary' end as is_voluntary_cancellation_flag
+
+from subscriber_movement sm
+
+inner join subscriber_cancels_txfm1 tx1
+on sm.member_type = tx1.member_type
+and cast(sm.subscription_id_src as string) = cast(tx1.subscription_id_src as string)
+and cast(sm.dw_effective_end_datetime as date) = cast(tx1.dw_effective_end_datetime as date)
+and cast(sm.subscriber_movement_datetime as date) = cast(tx1.dw_subscriber_end_datetime as date)
+
+inner join subscriber_cancels_txfm2 tx2
+on sm.member_type = tx2.member_type
+and cast(sm.subscriber_id_src as string) = cast(tx2.subscriber_id_src as string)
+and cast(sm.subscriber_movement_datetime as date) between cast(tx2.subscriber_tenure_start_datetime as date) and cast(tx2.subscriber_tenure_end_datetime as date)
+
+inner join prstn_subscription_movement psm
+on cast(sm.subscription_id_src as string) = cast(psm.subscription_id_src as string)
+and cast(sm.dw_effective_end_datetime as date) = cast(psm.movement_datetime as date)
+and psm.movement_type_code = 'from'
+
+where 1=1
+
+)
+, 
+
+subscriber_cancels_txfm4
+
+as
+
+(
+select 
+
+tx3.member_type
+, tx3.dw_subscriber_party_id
+, tx3.subscriber_id_src
+, tx3.subscriber_movement_type_code
+, tx3.subscriber_tenure_order
+, tx3.subscriber_tenure_start_datetime
+, date_diff(cast(tx3.subscriber_movement_datetime as date),cast(tx3.subscriber_tenure_start_datetime as date),  day) as subscriber_tenure_days
+, tx3.subscriber_movement_datetime
+, date(date_add(tx3.subscriber_movement_datetime, interval 1 day))  as subscriber_movement_report_date
+, tx3.dw_subscriber_movement_date
+, tx3.subscriber_movement_count_type
+, tx3.subscriber_movement_count
+, tx3.active_subscriber_count
+, tx3.subscriber_status_code
+, tx3.subscription_source_system_code
+, tx3.dw_subscription_id
+, tx3.subscription_id_src
+, tx3.subscription_status_code
+, tx3.dw_publication_id
+, tx3.dw_rate_plan_id
+, tx3.is_paying_flag
+, tx3.customer_type
+, tx3.dw_effective_start_datetime
+, tx3.dw_effective_end_datetime
+, tx3.subscription_movement_count
+, tx3.subscriber_subscription_movement_type_code
+, tx3.subscriber_subscription_movement_count_type
+, tx3.prior_subscription_registration_flag
+, tx3.prior_paid_subscription_flag
+, tx3.prior_registration_flag
+, tx3.subscription_detail_movement_count_type
+, tx3.subscription_detail_movement_count_sub_type
+, tx3.masthead
+, tx3.masthead_long_name
+, tx3.rate_plan_code
+, tx3.rate_plan_description
+, tx3.offer_category_name
+, tx3.offer_category_group_name
+, tx3.frontbook_backbook_group_name
+, tx3.delivery_medium_type
+, tx3.delivery_schedule_group
+, tx3.delivery_schedule_days
+, tx3.classification_level_1
+, tx3.classification_level_2
+, tx3.contract_offer_code
+, tx3.contract_offer_code_description
+, tx3.ratecard_price
+, tx3.adjusted_weekly_price
+, tx3.is_corporate_b2b_flag
+, tx3.is_bundle
+, tx3.v21_paywall_breach_code
+, tx3.local_publication_name
+, tx3.local_brand_name
+, tx3.hyper_local_publication_name
+, tx3.hyper_local_brand_name
+, tx3.sold_in_rate_plan_code
+, tx3.sold_in_payment_amount
+, tx3.sold_in_source
+, tx3.sold_in_source_code
+, tx3.sold_in_source_referrer
+, tx3.sold_in_source_channel
+, tx3.sold_in_channel
+, tx3.subscription_term_amount
+, tx3.term_period_name
+, tx3.subscriber_individual_gender
+, tx3.subscriber_lifestage_desc
+, tx3.subscriber_household_income_desc
+, tx3.subscriber_mosaic_type
+, tx3.subscriber_mosaic_title
+, tx3.subscriber_individual_age
+, tx3.subscriber_affluence_desc
+, tx3.subscriber_zip
+
+-- Cancel Flags
+
+, tx3.is_cancel_flag
+, tx3.is_switch_flag
+, tx3.is_reactivation_flag
+, tx3.is_voluntary_cancellation_flag
+
+from subscriber_cancels_txfm3 tx3
+
+where 1=1
+and (tx3.subscriber_movement_count_type = 'subscriber_cancellation' or (tx3.subscription_detail_movement_count_type = 'cancellation' and cast(tx3.dw_effective_end_datetime as date) = cast(tx3.subscriber_movement_datetime as date)))
+
+)
+,
+
+subscriber_cancels_txfm5
+
+
+as
+
+(
+select 
+
+'t_dashboard_subscriber_cancels' as entity_name
+, tx4.member_type
+, tx4.dw_subscriber_party_id
+, tx4.subscriber_id_src
+, tx4.subscriber_movement_type_code
+, tx4.subscriber_tenure_order
+, tx4.subscriber_tenure_start_datetime
+, tx4.subscriber_tenure_days
+, tx4.subscriber_movement_datetime 
+, tx4.subscriber_movement_report_date
+, tx4.dw_subscriber_movement_date
+, tx4.subscriber_movement_count_type
+, tx4.subscriber_movement_count
+, tx4.subscriber_status_code
+, tx4.subscription_source_system_code
+, tx4.prior_subscription_registration_flag
+, tx4.prior_paid_subscription_flag
+, tx4.prior_registration_flag
+
+/* Demographics Grouping */
+
+, coalesce(mos.mosaic_class, 'Not Available') as subscriber_mosaic_group
+, upper(tx4.subscriber_individual_gender) as subscriber_individual_gender
+, tx4.subscriber_lifestage_desc
+, tx4.subscriber_household_income_desc
+, tx4.subscriber_mosaic_type
+, tx4.subscriber_mosaic_title
+, tx4.subscriber_individual_age
+, tx4.subscriber_affluence_desc
+
+/* Date Fields */
+
+, cast(tx4.subscriber_movement_report_date as date) as dw_partition_date
+, cast(tx4.subscriber_movement_datetime as date) as subscriber_movement_date
+-- , cast(tx4.subscriber_movement_datetime as date) + (7 - extract(dayofweek from cast(tx4.subscriber_movement_datetime as date))) as alt_dw_partition_date
+
+, array_to_string(array_agg(distinct tx4.subscription_status_code order by tx4.subscription_status_code),', ') as combined_subscription_status_code
+, array_to_string(array_agg(distinct tx4.dw_publication_id order by tx4.dw_publication_id),', ') as combined_dw_publication_id
+, array_to_string(array_agg(distinct tx4.dw_rate_plan_id order by tx4.dw_rate_plan_id),', ') as combined_dw_rate_plan_id
+, array_to_string(array_agg(distinct tx4.is_paying_flag order by tx4.is_paying_flag),', ') as combined_is_paying_flag
+, array_to_string(array_agg(distinct tx4.customer_type order by tx4.customer_type),', ') as combined_customer_type
+, array_to_string(array_agg(distinct tx4.masthead order by tx4.masthead),', ') as combined_masthead
+, array_to_string(array_agg(distinct tx4.masthead_long_name order by tx4.masthead_long_name),', ') as combined_masthead_long_name
+, array_to_string(array_agg(distinct tx4.rate_plan_code order by tx4.rate_plan_code),', ') as combined_rate_plan_code
+, array_to_string(array_agg(distinct tx4.rate_plan_description order by tx4.rate_plan_description),', ') as combined_rate_plan_description
+, array_to_string(array_agg(distinct tx4.offer_category_name order by tx4.offer_category_name),', ') as combined_offer_category_name
+, array_to_string(array_agg(distinct tx4.offer_category_group_name order by tx4.offer_category_group_name),', ') as combined_offer_category_group_name
+, array_to_string(array_agg(distinct tx4.frontbook_backbook_group_name order by tx4.frontbook_backbook_group_name),', ') as combined_frontbook_backbook_group_name
+, array_to_string(array_agg(distinct tx4.delivery_medium_type order by tx4.delivery_medium_type),', ') as combined_delivery_medium_type
+, array_to_string(array_agg(distinct tx4.delivery_schedule_group order by tx4.delivery_schedule_group),', ') as combined_delivery_schedule_group
+, array_to_string(array_agg(distinct tx4.delivery_schedule_days order by tx4.delivery_schedule_days),', ') as combined_delivery_schedule_days
+, array_to_string(array_agg(distinct tx4.classification_level_1 order by tx4.classification_level_1),', ') as combined_classification_level_1
+, array_to_string(array_agg(distinct tx4.classification_level_2 order by tx4.classification_level_2),', ') as combined_classification_level_2
+, array_to_string(array_agg(distinct tx4.contract_offer_code_description order by tx4.contract_offer_code_description),', ') as combined_contract_offer_code_description
+, array_to_string(array_agg(distinct tx4.is_corporate_b2b_flag order by tx4.is_corporate_b2b_flag),', ') as combined_is_corporate_b2b_flag
+, array_to_string(array_agg(distinct tx4.is_bundle order by tx4.is_bundle),', ') as combined_is_bundle
+, array_to_string(array_agg(distinct tx4.v21_paywall_breach_code order by tx4.v21_paywall_breach_code),', ') as combined_v21_paywall_breach_code
+, array_to_string(array_agg(distinct tx4.local_publication_name order by tx4.local_publication_name),', ') as combined_local_publication_name
+, array_to_string(array_agg(distinct tx4.local_brand_name order by tx4.local_brand_name),', ') as combined_local_brand_name
+, array_to_string(array_agg(distinct tx4.hyper_local_publication_name order by tx4.hyper_local_publication_name),', ') as combined_hyper_local_publication_name
+, array_to_string(array_agg(distinct tx4.hyper_local_brand_name order by tx4.hyper_local_brand_name),', ') as combined_hyper_local_brand_name
+, array_to_string(array_agg(distinct tx4.sold_in_rate_plan_code order by tx4.sold_in_rate_plan_code),', ') as combined_sold_in_rate_plan_code
+, array_to_string(array_agg(distinct tx4.sold_in_source order by tx4.sold_in_source),', ') as combined_sold_in_source
+, array_to_string(array_agg(distinct tx4.sold_in_source_code order by tx4.sold_in_source_code),', ') as combined_sold_in_source_code
+, array_to_string(array_agg(distinct tx4.sold_in_source_referrer order by tx4.sold_in_source_referrer),', ') as combined_sold_in_source_referrer
+, array_to_string(array_agg(distinct tx4.sold_in_source_channel order by tx4.sold_in_source_channel),', ') as combined_sold_in_source_channel
+, array_to_string(array_agg(distinct tx4.sold_in_channel order by tx4.sold_in_channel),', ') as combined_sold_in_channel
+, array_to_string(array_agg(distinct cast(tx4.subscription_term_amount as string) order by cast(tx4.subscription_term_amount as string)),', ') as combined_subscription_term_amount
+, array_to_string(array_agg(distinct tx4.term_period_name order by tx4.term_period_name),', ') as combined_term_period_name
+
+, array_agg(struct(tx4.dw_subscription_id
+        , tx4.subscription_id_src
+        , tx4.subscription_status_code
+        , tx4.dw_publication_id
+        , tx4.dw_rate_plan_id
+        , tx4.subscription_movement_count
+        , tx4.is_paying_flag
+        , tx4.customer_type
+        , tx4.dw_effective_start_datetime
+        , tx4.dw_effective_end_datetime
+        , tx4.subscriber_subscription_movement_type_code
+        , tx4.subscriber_subscription_movement_count_type
+        , tx4.subscription_detail_movement_count_type
+        , tx4.subscription_detail_movement_count_sub_type
+        , tx4.masthead
+        , tx4.masthead_long_name
+        , tx4.rate_plan_code
+        , tx4.rate_plan_description
+        , tx4.offer_category_name
+        , tx4.offer_category_group_name
+        , coalesce(oc.offer_category_group,'Not Available') as offer_category_group
+        , tx4.frontbook_backbook_group_name
+        , tx4.delivery_medium_type
+        , tx4.delivery_schedule_group
+        , tx4.delivery_schedule_days
+        , tx4.classification_level_1
+        , tx4.classification_level_2
+        , tx4.contract_offer_code_description
+        , tx4.ratecard_price
+        , tx4.adjusted_weekly_price
+        , tx4.is_corporate_b2b_flag
+        , tx4.is_bundle
+        , tx4.v21_paywall_breach_code
+        , tx4.local_publication_name
+        , tx4.local_brand_name
+        , tx4.hyper_local_publication_name
+        , tx4.hyper_local_brand_name
+        , tx4.sold_in_rate_plan_code
+        , tx4.sold_in_payment_amount
+        , tx4.sold_in_source
+        , tx4.sold_in_source_code
+        , tx4.sold_in_source_referrer
+        , regexp_replace(tx4.sold_in_channel, 'Bau ','BAU ') as sold_in_channel
+        , tx4.subscription_term_amount
+        , tx4.term_period_name
+        , tx4.is_cancel_flag
+        , tx4.is_switch_flag
+        , tx4.is_reactivation_flag
+        , tx4.is_voluntary_cancellation_flag
+        , tx4.subscription_movement_count as detail_subscription_movement_count
+/* Churn Profile */
+
+, case when tx4.subscriber_tenure_days < 36 then '1) Infancy'
+        when cd.churn_score >= 0 and cd.churn_score <= 0.4 then '2) General Healthcare'
+        when cd.churn_score > 0.4 and cd.churn_score <= 0.7 then '3) Specialist Care'
+        when cd.churn_score > 0.7 then '4) Acute Care'
+        else '5) No Churn Score'
+       end as heartbeat_segment
+, cd.churn_score
+
+/* Cancels by reason type */
+
+, case when lower(tx4.is_voluntary_cancellation_flag) = 'involuntary' then '1) Involuntary Cancel'
+        when tx4.subscriber_tenure_days <= 30 then '2) Trialist Cancel'
+        when tx4.is_switch_flag = 'N' and tx4.is_reactivation_flag = 'N' and tx4.is_cancel_flag = 'Y' then '3) Cancel'
+        when tx4.is_switch_flag = 'Y' and tx4.is_reactivation_flag = 'N' and tx4.is_cancel_flag = 'N' then '4) Switch'
+        when tx4.is_switch_flag = 'N' and tx4.is_reactivation_flag = 'Y' and tx4.is_cancel_flag = 'N' then '5) Reactivation'
+        else 'ERROR'
+        end as subscriber_cancel_type
+
+        )) as subscription_details
+, sum(case when tx4.subscription_detail_movement_count_type = 'cancellation' then tx4.subscription_movement_count else 0 end) as subscription_movement_count
+
+from subscriber_cancels_txfm4 tx4
+
+left outer join offer_category oc
+on tx4.offer_category_name = oc.offer_category_name
+
+left outer join mosaic_reference_data mos
+on tx4.subscriber_mosaic_title = mos.mosaic_group_name
+
+left outer join `nau-data-nprod-dataservices.consumer_reference_data.t_latest_subscription_churn_score` cd
+on cast(tx4.subscription_id_src as string) = cast(cd.subscription_id as string)
+
+where 1=1
+and tx4.masthead not in('SN')
+and tx4.classification_level_2 not in('Print-only')
+and cast(tx4.subscriber_movement_report_date as date) between date(current_date('Australia/Sydney') - ((365 *3) - 1)) and date(current_date('Australia/Sydney') - 1)
+
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26
+
+)
+
+-- Query
+
+select 
+
+squ.*
+
+from 
+
+--subscriber_base
+--subscriber_cancels_txfm1
+--subscriber_cancels_txfm2
+--subscriber_cancels_txfm3
+--subscriber_cancels_txfm4
+subscriber_cancels_txfm5
+
+squ
+
+where 1=1
+
+;
+
