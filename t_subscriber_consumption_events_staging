@@ -1,7 +1,11 @@
+-- CREATE OR REPLACE PROCEDURE `nau-data-nprod-dataservices.prstn_genome.create_t_subscriber_consumption_events_staging` ()
+
+-- begin
 /*
-GENO 0032.001.04 - 20240930 Create Consumption Events View
+GENO 0032.001.04 - 20241105 Create Consumption Events View
 Excludes "Print-only"
-Version Date: 20240930
+Includes Recency, Visits & Brand-Section
+Version Date: 20241105
 */
 
 declare report_date date default cast(current_date('Australia/Sydney') - 1 as date);
@@ -119,6 +123,7 @@ rcd.report_date_name
 , sef.visit_page_num	
 , sef.Brand as brand
 , coalesce(sef.site_section,'no_section') as site_section
+, concat(sef.Brand,'|',coalesce(sef.site_section,'no_section')) as brand_section
 , sef.site_section2 as site_section_2	
 , sef.site_section3 as site_section_3
 , sef.content_type as content_type
@@ -165,6 +170,9 @@ sia.report_date_name
 , sum(ce.article_view_count) as last_28_days_article_view_count
 , sum(case when regexp_contains(coalesce(ce.site_section,'no_section'),'my account') or regexp_contains(coalesce(ce.site_section_2,'no_section'),'myaccount') or regexp_contains(coalesce(ce.site_section_3,'no_section'),'my account') then ce.page_view_count else 0 end) as last_28_days_my_account_page_view_count
 , count(distinct case when regexp_contains(coalesce(ce.site_section,'no_section'),'my account') or regexp_contains(coalesce(ce.site_section_2,'no_section'),'myaccount') or regexp_contains(coalesce(ce.site_section_3,'no_section'),'my account') then ce.au_activity_date end) as last_28_days_my_account_active_days_count
+, max(ce.au_activity_date) as recency_date
+, (date_diff(sia.base_date, max(ce.au_activity_date), day) + 1)as last_28_days_recency
+, sum(case when regexp_contains(ce.site_section,r'digitaledition|digitalprinteditions') then ce.page_view_count else 0 end) as last_28_days_dpe_page_view_count
 
 from subscriber_id_agg sia
 
@@ -425,6 +433,269 @@ and lv2.brand_order <= 5
 group by 1,2,3
 
 )
+, 
+
+engagement_brand_section
+
+as
+
+(
+select 
+
+lv2.report_date_name
+, lv2.base_date
+, lv2.subscriber_id_src
+, array_to_string(array_agg(cast(lv2.brand_section as string) order by lv2.brand_section_order) ,', ') as combined_top_5_brand_section_last_28_days
+, array_to_string(array_agg(cast(lv2.brand_section_page_view_count as string) order by lv2.brand_section_order) ,', ') as combined_brand_section_last_28_days_page_view_count
+, array_agg(struct(lv2.brand_section, lv2.brand_section_page_view_count)) as subscriber_top_5_brand_section_details
+
+from
+(
+select 
+
+lv1.report_date_name
+, lv1.base_date
+, lv1.subscriber_id_src
+, lv1.brand_section
+, lv1.brand_section_page_view_count
+, lv1.brand_section_article_view_count
+, row_number() over(partition by lv1.report_date_name, lv1.base_date, lv1.subscriber_id_src order by lv1.brand_section_page_view_count desc) as brand_section_order
+
+from
+(
+select 
+
+sia.report_date_name
+, sia.base_date
+, sia.subscriber_id_src
+, coalesce(ce.brand_section, 'Not Available') as brand_section
+, coalesce(sum(ce.page_view_count),0) as brand_section_page_view_count
+, coalesce(sum(ce.article_view_count),0) as brand_section_article_view_count
+
+from subscriber_id_agg sia
+
+left outer join consumption_events ce
+on cast(sia.subscriber_id_src as string) = cast(ce.subscriber_id_src as string)
+and sia.report_date_name = ce.report_date_name
+and sia.base_date = ce.base_date
+
+where 1=1
+
+group by 1,2,3,4
+
+) lv1
+
+where 1=1
+
+) lv2
+
+where 1=1
+and lv2.brand_section_order <= 5
+
+group by 1,2,3
+
+)
+, 
+
+engagement_brand_section_excl
+
+as
+
+(
+select 
+
+lv2.report_date_name
+, lv2.base_date
+, lv2.subscriber_id_src
+, array_to_string(array_agg(cast(lv2.brand_section as string) order by lv2.brand_section_order) ,', ') as combined_top_5_brand_section_excl_last_28_days
+, array_to_string(array_agg(cast(lv2.brand_section_page_view_count as string) order by lv2.brand_section_order) ,', ') as combined_brand_section_excl_last_28_days_page_view_count
+, array_agg(struct(lv2.brand_section, lv2.brand_section_page_view_count)) as subscriber_top_5_brand_section_excl_details
+
+from
+(
+select 
+
+lv1.report_date_name
+, lv1.base_date
+, lv1.subscriber_id_src
+, lv1.brand_section
+, lv1.brand_section_page_view_count
+, lv1.brand_section_article_view_count
+, row_number() over(partition by lv1.report_date_name, lv1.base_date, lv1.subscriber_id_src order by lv1.brand_section_page_view_count desc) as brand_section_order
+
+from
+(
+select 
+
+sia.report_date_name
+, sia.base_date
+, sia.subscriber_id_src
+, coalesce(ce.brand_section, 'Not Available') as brand_section
+, coalesce(sum(ce.page_view_count),0) as brand_section_page_view_count
+, coalesce(sum(ce.article_view_count),0) as brand_section_article_view_count
+
+from subscriber_id_agg sia
+
+left outer join consumption_events ce
+on cast(sia.subscriber_id_src as string) = cast(ce.subscriber_id_src as string)
+and sia.report_date_name = ce.report_date_name
+and sia.base_date = ce.base_date
+and lower(ce.brand) not in('newscomau')
+where 1=1
+
+group by 1,2,3,4
+
+) lv1
+
+where 1=1
+
+) lv2
+
+where 1=1
+and lv2.brand_section_order <= 5
+
+group by 1,2,3
+
+)
+, 
+
+myaccount_txfm1
+
+as
+
+(
+select 
+
+sia.report_date_name
+, sia.base_date
+, sia.subscriber_id_src
+, coalesce(ce.site_section, 'Not Available') as site_section
+, coalesce(ce.site_section_2, 'Not Available') as site_section_2
+, coalesce(ce.site_section_3, 'Not Available') as site_section_3
+, coalesce(sum(ce.page_view_count),0) as myaccount_page_view_count
+, coalesce(sum(ce.article_view_count),0) as myaccount_article_view_count
+
+from subscriber_id_agg sia
+
+left outer join consumption_events ce
+on cast(sia.subscriber_id_src as string) = cast(ce.subscriber_id_src as string)
+and sia.report_date_name = ce.report_date_name
+and sia.base_date = ce.base_date
+and (regexp_contains(coalesce(ce.site_section,'no_section'),'my account') or regexp_contains(coalesce(ce.site_section_2,'no_section'),'myaccount') or regexp_contains(coalesce(ce.site_section_3,'no_section'),'my account'))
+
+where 1=1
+
+group by 1,2,3,4,5,6
+
+)
+,
+
+myaccount_txfm2
+
+as
+
+(
+select 
+
+lv3.report_date_name
+, lv3.base_date
+, lv3.subscriber_id_src
+, array_to_string(array_agg(cast(lv3.myaccount_section_grouped as string) order by lv3.myaccount_section_order) ,', ') as combined_top_3_myaccount_section_last_28_days
+, array_to_string(array_agg(cast(lv3.myaccount_page_view_count as string) order by lv3.myaccount_section_order) ,', ') as combined_myaccount_section_last_28_days_page_view_count
+, array_agg(struct(lv3.myaccount_section_grouped, lv3.myaccount_page_view_count)) as subscriber_top_3_myaccount_section_details
+
+from
+(
+select 
+
+lv2.report_date_name
+, lv2.base_date
+, lv2.subscriber_id_src
+, lv2.myaccount_section_grouped
+, lv2.myaccount_page_view_count
+, lv2.myaccount_article_view_count
+, row_number() over(partition by lv2.report_date_name, lv2.base_date, lv2.subscriber_id_src order by lv2.myaccount_page_view_count desc) as myaccount_section_order
+
+from
+(
+select 
+
+lv1.report_date_name
+, lv1.base_date
+, lv1.subscriber_id_src
+, lv1.myaccount_section_grouped
+, sum(lv1.myaccount_page_view_count) as myaccount_page_view_count
+, sum(lv1.myaccount_article_view_count) as myaccount_article_view_count
+
+from
+(
+select 
+
+tx1.report_date_name
+, tx1.base_date
+, tx1.subscriber_id_src
+, tx1.site_section as myaccount_section_grouped
+, sum(tx1.myaccount_page_view_count) as myaccount_page_view_count
+, sum(tx1.myaccount_article_view_count) as myaccount_article_view_count
+
+from myaccount_txfm1 tx1
+
+where 1=1
+
+group by 1,2,3,4
+
+union all
+
+select 
+
+tx1.report_date_name
+, tx1.base_date
+, tx1.subscriber_id_src
+, tx1.site_section_2 as section_grouped
+, sum(tx1.myaccount_page_view_count) as myaccount_page_view_count
+, sum(tx1.myaccount_article_view_count) as myaccount_article_view_count
+
+from myaccount_txfm1 tx1
+
+where 1=1
+
+group by 1,2,3,4
+
+union all
+
+select 
+
+tx1.report_date_name
+, tx1.base_date
+, tx1.subscriber_id_src
+, tx1.site_section_3 as section_grouped
+, sum(tx1.myaccount_page_view_count) as myaccount_page_view_count
+, sum(tx1.myaccount_article_view_count) as myaccount_article_view_count
+
+from myaccount_txfm1 tx1
+
+where 1=1
+
+group by 1,2,3,4
+
+) lv1
+
+where 1=1
+
+group by 1,2,3,4
+
+) lv2
+
+where 1=1
+
+) lv3
+
+where 1=1
+and myaccount_section_order <=3
+
+group by 1,2,3
+
+)
 ,
 
 subscriber_engagement_summary
@@ -447,6 +718,8 @@ sf.report_date_name
 , coalesce(ld.last_28_days_article_view_count, 0) as subscriber_last_28_days_article_view_count
 , coalesce(ld.last_28_days_my_account_page_view_count, 0) as subscriber_last_28_days_my_account_page_view_count
 , coalesce(ld.last_28_days_my_account_active_days_count, 0) as subscriber_last_28_days_my_account_active_days_count
+, coalesce(cast(ld.last_28_days_recency as string),'28+') as subscriber_last_28_days_recency
+, coalesce(ld.last_28_days_dpe_page_view_count,0) as subscriber_last_28_days_dpe_page_view_count
 , se.combined_top_5_site_section_last_28_days
 , se.combined_site_section_last_28_days_page_view_count
 , se.subscriber_top_5_site_section_details
@@ -459,6 +732,15 @@ sf.report_date_name
 , brd.combined_top_5_brand_last_28_days
 , brd.combined_brand_last_28_days_page_view_count
 , brd.subscriber_top_5_brand_details
+, ebs.combined_top_5_brand_section_last_28_days
+, ebs.combined_brand_section_last_28_days_page_view_count
+, ebs.subscriber_top_5_brand_section_details
+, ebse.combined_top_5_brand_section_excl_last_28_days
+, ebse.combined_brand_section_excl_last_28_days_page_view_count
+, ebse.subscriber_top_5_brand_section_excl_details
+, matx2.combined_top_3_myaccount_section_last_28_days
+, matx2.combined_myaccount_section_last_28_days_page_view_count
+, matx2.subscriber_top_3_myaccount_section_details
 
 from subscriber_fct sf
 
@@ -487,6 +769,21 @@ on cast(sf.subscriber_id_src as string) = cast(brd.subscriber_id_src as string)
 and sf.report_date_name = brd.report_date_name
 and sf.base_date = brd.base_date
 
+left outer join engagement_brand_section ebs
+on cast(sf.subscriber_id_src as string) = cast(ebs.subscriber_id_src as string)
+and sf.report_date_name = ebs.report_date_name
+and sf.base_date = ebs.base_date
+
+left outer join engagement_brand_section_excl ebse
+on cast(sf.subscriber_id_src as string) = cast(ebse.subscriber_id_src as string)
+and sf.report_date_name = ebse.report_date_name
+and sf.base_date = ebse.base_date
+
+left outer join myaccount_txfm2 matx2
+on cast(sf.subscriber_id_src as string) = cast(matx2.subscriber_id_src as string)
+and sf.report_date_name = matx2.report_date_name
+and sf.base_date = matx2.base_date
+
 where 1=1
 and sf.subscriber_record_order = 1
 
@@ -509,3 +806,4 @@ where 1=1
 
 ;
 
+-- end
