@@ -1,0 +1,169 @@
+/*
+GENO 0028.001.01 - 20240724 Creates Subscriber Demographics
+Creates Single record for Subscribe DemographicsIncludes Lapsed Subscribers
+Version Date: 20240724
+*/
+
+declare csa_pt_date array<date> default
+(select array_agg(distinct pt_date) from(select max(dw_tgt_partition_date) as pt_date from  `ncau-data-newsquery-prd.bdm_consumer.consumer_profile_segment_attributes`  where dw_tgt_partition_date between current_date('Australia/Sydney') - 180 and current_date('Australia/Sydney'))); --<='2199-12-31'));
+
+create or replace table `nau-data-nprod-dataservices.prstn_genome.t_subscriber_demographics` 
+
+as
+
+with demographics_data
+
+as
+
+(
+select 
+
+csa.subscriber_id_src
+, csa.segment_code
+, csa.segment_value
+, csa.dw_effective_start_datetime
+, csa.dw_effective_end_datetime
+
+from `ncau-data-newsquery-prd.bdm_consumer.consumer_profile_segment_attributes` csa
+
+where 1=1
+and csa.dw_tgt_partition_date in unnest(csa_pt_date)
+and cast(csa.subscriber_id_src as string) <> '-1'
+and csa.dw_source_system_code = 'Experian'
+
+)
+, 
+
+demographics_txfm1
+
+as
+
+(
+select 
+
+dd.subscriber_id_src
+, min(dd.dw_effective_start_datetime) as dw_effective_start_datetime
+, max(dd.dw_effective_end_datetime) as dw_effective_end_datetime
+
+from demographics_data dd
+
+where 1=1
+
+group by 1
+
+)
+, 
+
+demographics_txfm2
+
+as
+
+(
+
+select 
+
+*
+
+from
+(
+select 
+
+tx1.subscriber_id_src
+, dd.segment_code
+, dd.segment_value
+, tx1.dw_effective_start_datetime
+, tx1.dw_effective_end_datetime
+
+from demographics_txfm1 tx1
+
+inner join demographics_data dd
+on cast(tx1.subscriber_id_src as string) = cast(dd.subscriber_id_src as string)
+
+where 1=1
+)
+
+pivot(max(segment_value) for segment_code IN ('household_income', 'risk_insight', 'gnaf_longitude', 'factor_5_score', 'affluence_desc', 'head_of_household_age_desc', 'gnaf_latitude', 'factor_4_perc', 'factor_3_perc', 'affluence', 'factor_4_score', 'individual_gender', 'length_of_residence', 'individual_age', 'length_of_residence_desc', 'credit_demand', 'children_11_18_decile', 'factor_1_perc', 'lifestage', 'factor_2_dec', 'household_composition', 'children_0_10_decile', 'head_of_household_age', 'factor_2_perc', 'factor_1_dec', 'factor_1_score', 'household_composition_desc', 'factor_5_perc', 'mosaic_type', 'factor_4_dec', 'lifestage_desc', 'young_adult_at_address', 'property_size_sq_meters_band', 'property_size_sq_meters', 'factor_2_score', 'adults_at_address', 'factor_3_dec', 'household_income_desc', 'factor_5_dec', 'factor_3_score'
+))
+
+)
+, 
+
+subscriber_demographics
+
+as
+
+(
+select 
+
+tx2.subscriber_id_src
+, tx2.dw_effective_start_datetime
+, tx2.dw_effective_end_datetime
+, coalesce(tx2.household_income, 'Not Available') as household_income
+, coalesce(tx2.risk_insight, 'Not Available') as risk_insight
+, coalesce(tx2.gnaf_longitude, 'Not Available') as gnaf_longitude
+, coalesce(tx2.factor_5_score, 'Not Available') as factor_5_score
+, coalesce(tx2.affluence_desc, 'Not Available') as affluence_desc
+, coalesce(tx2.head_of_household_age_desc, 'Not Available') as head_of_household_age_desc
+, coalesce(tx2.gnaf_latitude, 'Not Available') as gnaf_latitude
+, coalesce(tx2.factor_4_perc, 'Not Available') as factor_4_perc
+, coalesce(tx2.factor_3_perc, 'Not Available') as factor_3_perc
+, coalesce(tx2.affluence, 'Not Available') as affluence
+, coalesce(tx2.factor_4_score, 'Not Available') as factor_4_score
+, coalesce(tx2.individual_gender, 'Not Available') as individual_gender
+, coalesce(tx2.length_of_residence, 'Not Available') as length_of_residence
+, coalesce(tx2.individual_age, 'Not Available') as individual_age
+, coalesce(tx2.length_of_residence_desc, 'Not Available') as length_of_residence_desc
+, coalesce(tx2.credit_demand, 'Not Available') as credit_demand
+, coalesce(tx2.children_11_18_decile, 'Not Available') as children_11_18_decile
+, coalesce(tx2.factor_1_perc, 'Not Available') as factor_1_perc
+, coalesce(tx2.lifestage, 'Not Available') as lifestage
+, coalesce(tx2.factor_2_dec, 'Not Available') as factor_2_dec
+, coalesce(tx2.household_composition, 'Not Available') as household_composition
+, coalesce(tx2.children_0_10_decile, 'Not Available') as children_0_10_decile
+, coalesce(tx2.head_of_household_age, 'Not Available') as head_of_household_age
+, coalesce(tx2.factor_2_perc, 'Not Available') as factor_2_perc
+, coalesce(tx2.factor_1_dec, 'Not Available') as factor_1_dec
+, coalesce(tx2.factor_1_score, 'Not Available') as factor_1_score
+, coalesce(tx2.household_composition_desc, 'Not Available') as household_composition_desc
+, coalesce(tx2.factor_5_perc, 'Not Available') as factor_5_perc
+, coalesce(tx2.mosaic_type, 'Not Available') as mosaic_type
+, coalesce(tx2.factor_4_dec, 'Not Available') as factor_4_dec
+, coalesce(tx2.lifestage_desc, 'Not Available') as lifestage_desc
+, coalesce(tx2.young_adult_at_address, 'Not Available') as young_adult_at_address
+, coalesce(tx2.property_size_sq_meters_band, 'Not Available') as property_size_sq_meters_band
+, coalesce(tx2.property_size_sq_meters, 'Not Available') as property_size_sq_meters
+, coalesce(tx2.factor_2_score, 'Not Available') as factor_2_score
+, coalesce(tx2.adults_at_address, 'Not Available') as adults_at_address
+, coalesce(tx2.factor_3_dec, 'Not Available') as factor_3_dec
+, coalesce(tx2.household_income_desc, 'Not Available') as household_income_desc
+, coalesce(tx2.factor_5_dec, 'Not Available') as factor_5_dec
+, coalesce(tx2.factor_3_score, 'Not Available') as factor_3_score
+, coalesce(substr(tx2.mosaic_type,1,1), 'Not Available') as mosaic_prefix
+, coalesce(mgd.mosaic_group_name, 'Not Available') as mosaic_title
+, coalesce(mtd.mosaic_type_name, 'Not Available') as mosaic_type_name
+, row_number() over(partition by tx2.subscriber_id_src order by tx2.dw_effective_start_datetime) as subscriber_record_order
+
+from demographics_txfm2 tx2
+
+left outer join `nau-data-nprod-dataservices.reference_data_genome.t_mosaic_group_dim`  mgd
+on substr(tx2.mosaic_type,1,1) = mgd.mosaic_group
+
+left outer join `nau-data-nprod-dataservices.reference_data_genome.t_mosaic_type_dim` mtd
+on tx2.mosaic_type = mtd.mosaic_type
+
+where 1=1
+
+)
+
+
+-- Query 
+
+select 
+
+squ.*
+
+from subscriber_demographics squ
+
+where 1=1
+
+;
