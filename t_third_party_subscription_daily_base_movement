@@ -1,7 +1,7 @@
 /*
-GENO 0027.001.01 - 20240717 Third Party Rolling 13 Month Daily Subscription Base & Movement
+GENO 0027.001.02 - 20240902 Third Party Rolling 13 Month Daily Subscription Base & Movement
 Method to create 13 months rolling subscriber base & movement for Third Party
-Version Date: 20240717
+Version Date: 20240902
 */
 
 declare activity_end_date date default date(current_date('Australia/Sydney') -1);
@@ -12,6 +12,8 @@ declare report_end_date date default date(activity_end_date);
 create or replace table `nau-data-nprod-dataservices.prstn_genome.t_third_party_subscription_daily_base_movement`
 
 partition by report_date
+
+cluster by report_date, rate_plan_code
 
 as
 
@@ -50,7 +52,7 @@ select
 'subscriber' as member_type
 , psb.dw_subscriber_party_id
 , psb.subscriber_id_src
-, psb.subscription_source_system_code
+, psb.dw_source_system_code
 , psb.masthead
 , psb.rate_plan_code
 , psb.delivery_medium_type
@@ -74,12 +76,12 @@ select
 
 from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_base` psb
 
-inner join `nau-data-nprod-dataservices.reference_data_genome.t_customer_type` cty
+left outer join `nau-data-nprod-dataservices.reference_data_genome.t_customer_type` cty
 on psb.classification_level_2 = cty.classification_level_2
 and date(current_date('Australia/Sydney') -1) between cty.start_date and cty.end_date
 
 where 1=1
-and psb.dw_source_system_code in('APLS','GPLA')
+and psb.dw_source_system_code not in('THINK')
 
 )
 , 
@@ -93,7 +95,7 @@ select
 
 cal.calendar_date as report_date
 , tx1.member_type
-, tx1.subscription_source_system_code
+, tx1.dw_source_system_code
 , tx1.masthead
 , tx1.rate_plan_code
 , tx1.delivery_medium_type
@@ -136,7 +138,7 @@ select
 'subscriber' as member_type
 , psm.dw_subscriber_party_id
 , psm.subscriber_id_src
-, psm.subscription_source_system_code
+, psm.dw_source_system_code
 , psm.masthead
 , psm.rate_plan_code
 , psm.delivery_medium_type
@@ -163,12 +165,12 @@ select
 
 from `nau-data-nprod-dataservices.prstn_genome.t_prstn_subscription_movement` psm
 
-inner join `nau-data-nprod-dataservices.reference_data_genome.t_customer_type` cty
+left outer join `nau-data-nprod-dataservices.reference_data_genome.t_customer_type` cty
 on psm.classification_level_2 = cty.classification_level_2
 and date(current_date('Australia/Sydney') -1) between cty.start_date and cty.end_date
 
 where 1=1
-and psm.dw_source_system_code in('APLS','GPLA')
+and psm.dw_source_system_code not in('THINK')
 
 )
 , 
@@ -182,7 +184,7 @@ select
 
 cal.calendar_date as report_date
 , tx1.member_type
-, tx1.subscription_source_system_code
+, tx1.dw_source_system_code
 , tx1.masthead
 , tx1.rate_plan_code
 , tx1.delivery_medium_type
@@ -227,7 +229,7 @@ select
 
 lv1.report_date
 , lv1.member_type
-, lv1.subscription_source_system_code
+, lv1.dw_source_system_code
 , lv1.masthead
 , lv1.rate_plan_code
 , lv1.delivery_medium_type
@@ -257,7 +259,7 @@ select
 
 sb.report_date
 , sb.member_type
-, sb.subscription_source_system_code
+, sb.dw_source_system_code
 , sb.masthead
 , sb.rate_plan_code
 , sb.delivery_medium_type
@@ -290,7 +292,7 @@ select
 
 sm.report_date
 , sm.member_type
-, sm.subscription_source_system_code
+, sm.dw_source_system_code
 , sm.masthead
 , sm.rate_plan_code
 , sm.delivery_medium_type
