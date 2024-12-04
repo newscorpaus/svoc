@@ -1,8 +1,8 @@
 /*
-GENO 0016.005.11 - 20241129 Genome Dashboard Subscription Adds Performance
-Genome Dashboard - Adds Performance
+GENOP 0016.001.01 - 20241113 Genome Dashboard Subscription Adds Performance
+Genome Dashboard - Adds Performance NewsQuery Production
 Includes 3rd Party
-Version Date: 20241129
+Version Date: 20241113
 */
 
 /* Dashboard Dates */
@@ -27,7 +27,7 @@ declare dashboard_rolling_6_weeks_end_date date default dashboard_report_end_dat
 
 /* Maximum Date from Source */
 
-declare max_date_from_data date default (select cast(max(dw_subscriber_movement_date) as date) from `ncau-cons-dev-datagenome.prstn_genome.t_subscriber_adds` tsa where 1=1 and tsa.dw_partition_date between dashboard_calendar_start_date and  dashboard_calendar_end_date
+declare max_date_from_data date default (select cast(max(tsa.subscriber_movement_date) as date) from `ncau-data-newsquery-prd.asl_audience_insights.subscriber_adds` tsa where 1=1 and tsa.subscriber_movement_date between dashboard_calendar_start_date and  dashboard_calendar_end_date
 );
 
 /* Filter Parameters */
@@ -93,7 +93,8 @@ tsa.subscriber_mosaic_group
 , sd.sold_in_source_referrer
 , sd.sold_in_channel
 , sd.classification_level_2
-, sd.offer_category_group
+-- , sd.offer_category_group
+, sd.offer_category_group_name
 , tsa.subscriber_individual_gender
 , tsa.subscriber_individual_age
 , sd.key_adds_type
@@ -115,18 +116,18 @@ tsa.subscriber_mosaic_group
 , rcd.dashboard_reporting_current_year_flag
 , rcd.dashboard_reporting_last_2_years_flag
 
-from `ncau-cons-dev-datagenome.prstn_genome.t_subscriber_adds` tsa
+from `ncau-data-newsquery-prd.asl_audience_insights.subscriber_adds` tsa
 , unnest(subscription_details) as sd
 
 inner join relative_calendar_dim rcd
 on cast(tsa.subscriber_movement_date as date) = cast(rcd.report_date as date) 
 
 where 1=1
-and tsa.dw_partition_date between dashboard_calendar_start_date and  dashboard_calendar_end_date
+and tsa.subscriber_movement_date between dashboard_calendar_start_date and  dashboard_calendar_end_date
 and case when length(member_type_parameter) = 0 then 1 when tsa.member_type = member_type_parameter then 1 else 0 end = 1
 and sd.is_paying_flag = 'Y'
-and sd.subscription_detail_movement_count_type = 'acquisition'
-and case when sd.customer_type in unnest(customer_type_parameter) then 1 when array_length(customer_type_parameter) = 0 then 1 else 0 end = 1 
+and sd.subscription_movement_count_type = 'acquisition'
+-- and case when sd.customer_type in unnest(customer_type_parameter) then 1 when array_length(customer_type_parameter) = 0 then 1 else 0 end = 1 
 and case when sd.masthead in unnest(masthead_parameter) then 1 when array_length(masthead_parameter) = 0 then 1 else 0 end = 1 
 and case when sd.classification_level_2 in unnest(classification_level_2_parameter) then 1 when array_length(classification_level_2_parameter) = 0 then 1 else 0 end = 1 
 )
@@ -144,7 +145,8 @@ tx1.key_adds_type
 , tx1.sold_in_source_referrer
 , tx1.sold_in_channel
 , tx1.classification_level_2
-, tx1.offer_category_group
+-- , tx1.offer_category_group
+, tx1.offer_category_group_name
 , tx1.subscriber_individual_gender
 , tx1.subscriber_individual_age
 , tx1.report_date
@@ -201,7 +203,8 @@ tpbm.member_type
 , rcd.dashboard_reporting_current_year_flag
 , rcd.dashboard_reporting_last_2_years_flag
 
-from `ncau-cons-dev-datagenome.prstn_genome.t_third_party_subscription_daily_base_movement` tpbm
+-- from `ncau-cons-dev-datagenome.prstn_genome.t_third_party_subscription_daily_base_movement` tpbm
+from `ncau-data-newsquery-prd.asl_audience_insights.third_party_subscription_daily_base_movement` tpbm
 
 inner join relative_calendar_dim rcd
 on cast(tpbm.report_date as date) = cast(rcd.report_date as date) 
@@ -231,7 +234,8 @@ tx1.classification_level_2
 , 'Not Available' as subscriber_mosaic_group
 , 'Not Available' as sold_in_source_referrer
 , 'Not Available' as sold_in_channel
-, 'Not Available' as  offer_category_group
+-- , 'Not Available' as  offer_category_group
+, 'Not Available' as  offer_category_group_name
 , 'Not Available' as subscriber_individual_gender
 , 'Not Available' as subscriber_individual_age
 , tx1.report_date
@@ -273,7 +277,8 @@ lv1.subscription_group
 , lv1.sold_in_source_referrer
 , lv1.sold_in_channel
 , lv1.classification_level_2
-, lv1.offer_category_group
+-- , lv1.offer_category_group
+, lv1.offer_category_group_name
 , lv1.subscriber_individual_gender
 , lv1.subscriber_individual_age
 , lv1.report_date
@@ -301,7 +306,8 @@ select
 , tx2.sold_in_source_referrer
 , tx2.sold_in_channel
 , tx2.classification_level_2
-, tx2.offer_category_group
+-- , tx2.offer_category_group
+, tx2.offer_category_group_name
 , tx2.subscriber_individual_gender
 , tx2.subscriber_individual_age
 , tx2.report_date
@@ -333,7 +339,8 @@ select
 , tx2.sold_in_source_referrer
 , tx2.sold_in_channel
 , tx2.classification_level_2
-, tx2.offer_category_group
+-- , tx2.offer_category_group
+, tx2.offer_category_group_name
 , tx2.subscriber_individual_gender
 , tx2.subscriber_individual_age
 , tx2.report_date
@@ -376,7 +383,8 @@ sbf.member_type
 , sbf.subscriber_individual_gender
 , sbf.subscriber_individual_age
 , sbf.classification_level_2
-, sbf.offer_category_group
+-- , sbf.offer_category_group
+, sbf.offer_category_group_name
 , sbf.sold_in_channel
 , sbf.sold_in_source_referrer
 , sbf.subscription_closing_base_flag 
@@ -404,7 +412,8 @@ sbf.member_type
 , rcd.dashboard_reporting_current_year_flag
 , rcd.dashboard_reporting_last_2_years_flag
 
-from `ncau-cons-dev-datagenome.prstn_genome.t_subscription_base_history` sbf
+-- from `ncau-cons-dev-datagenome.prstn_genome.t_subscription_base_history` sbf
+from `ncau-data-newsquery-prd.asl_audience_insights.subscription_base_history` sbf
 
 inner join relative_calendar_dim rcd
 on cast(sbf.report_date as date) = cast(rcd.report_date as date) 
@@ -433,7 +442,8 @@ lv1.subscription_group
 , lv1.subscriber_individual_gender
 , lv1.subscriber_individual_age
 , lv1.classification_level_2
-, lv1.offer_category_group
+-- , lv1.offer_category_group
+, lv1.offer_category_group_name
 , lv1.sold_in_channel
 , lv1.sold_in_source_referrer
 , lv1.report_date
@@ -463,7 +473,8 @@ select
 , tx1.subscriber_individual_gender
 , tx1.subscriber_individual_age
 , tx1.classification_level_2
-, tx1.offer_category_group
+-- , tx1.offer_category_group
+, tx1.offer_category_group_name
 , tx1.sold_in_channel
 , tx1.sold_in_source_referrer
 , tx1.report_date
@@ -498,7 +509,8 @@ select
 , tx2.subscriber_individual_gender
 , tx2.subscriber_individual_age
 , tx2.classification_level_2
-, tx2.offer_category_group
+-- , tx2.offer_category_group
+, tx2.offer_category_group_name
 , tx2.sold_in_channel
 , tx2.sold_in_source_referrer
 , tx2.report_date
@@ -577,54 +589,28 @@ order by 1 asc)) as key_adds_type
 /* Adds by Audience */
 
 , (array(select as struct 
-lv1.*
-from
-(
-select
-case when sa.subscriber_mosaic_group = 'Not Available' then 'New Unknown' else sa.subscriber_mosaic_group end as subscriber_mosaic_group 
+sa.subscriber_mosaic_group
 , sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end) as subscription_adds
 , sum(sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end)) over() as total_subscription_adds, safe_divide(sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end),sum(sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end)) over()) as subscription_adds_percent  
 from subscriber_adds sa 
 where 1=1 
 and sa.dashboard_reporting_period_flag = 1
 and sa.subscription_group not in('3rd Party')
-group by 1
-) lv1
-where 1=1 
-order by 
-case when lv1.subscriber_mosaic_group = 'Young Professionals' then 1
-      when lv1.subscriber_mosaic_group = 'Growing Families' then 2
-      when lv1.subscriber_mosaic_group = 'Older Affluents' then 3
-      when lv1.subscriber_mosaic_group = 'Low Income Households' then 4
-      when lv1.subscriber_mosaic_group = 'New Unknown' then 5
-      else 5 end asc
-)) as adds_by_audience
+group by 1 
+order by 1 asc)) as adds_by_audience
 
 /* Closing Base Audience */
 
 , (array(select as struct 
-lv1.*
-from
-(
-select
-case when cb.subscriber_mosaic_group = 'Not Available' then 'New Unknown' else cb.subscriber_mosaic_group end as subscriber_mosaic_group 
+cb.subscriber_mosaic_group
 , sum(case when cb.dashboard_reporting_closing_base_flag = 1 then cb.subscription_count else 0 end) as subscription_count
 , sum(sum(case when cb.dashboard_reporting_closing_base_flag = 1 then cb.subscription_count else 0 end)) over() as total_subscription_count, safe_divide(sum(case when cb.dashboard_reporting_closing_base_flag = 1 then cb.subscription_count else 0 end),sum(sum(case when cb.dashboard_reporting_closing_base_flag = 1 then cb.subscription_count else 0 end)) over()) as subscription_closing_base_percent  
 from subscriber_base cb 
 where 1=1 
 and cb.dashboard_reporting_closing_base_flag = 1
 and cb.subscription_group not in('3rd Party')
-group by 1
-) lv1
-where 1=1
-order by 
-case when lv1.subscriber_mosaic_group = 'Young Professionals' then 1
-      when lv1.subscriber_mosaic_group = 'Growing Families' then 2
-      when lv1.subscriber_mosaic_group = 'Older Affluents' then 3
-      when lv1.subscriber_mosaic_group = 'Low Income Households' then 4
-      when lv1.subscriber_mosaic_group = 'New Unknown' then 5
-      else 5 end asc
-)) as adds_audience_closing_base
+group by 1 
+order by 1 asc)) as adds_audience_closing_base
 
 /* Net Adds 2 Year Trend */
 
@@ -721,7 +707,7 @@ order by 1,2 asc)) as adds_by_product_last_7_days
 /* Adds by Price */
 
 , (array(select as struct 
-sa.offer_category_group
+sa.offer_category_group_name
 , sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end) as subscription_adds
 , sum(sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end)) over() as total_subscription_adds, safe_divide(sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end),sum(sum(case when sa.dashboard_reporting_period_flag = 1 then sa.adds_count else 0 end)) over()) as subscription_adds_percent  
 from subscriber_adds sa 
@@ -734,7 +720,7 @@ order by 1 asc)) as adds_by_price
 
 , (array(select as struct 
 sa.report_date
-, sa.offer_category_group
+, sa.offer_category_group_name
 , sum(case when sa.dashboard_reporting_week_flag = 1 then sa.adds_count else 0 end) as subscription_adds
 , sum(sum(case when sa.dashboard_reporting_week_flag = 1 then sa.adds_count else 0 end)) over(partition by sa.report_date) as total_subscription_adds, coalesce(safe_divide(sum(case when sa.dashboard_reporting_week_flag = 1 then sa.adds_count else 0 end),sum(sum(case when sa.dashboard_reporting_week_flag = 1 then sa.adds_count else 0 end)) over(partition by sa.report_date)),0) as subscription_adds_percent 
 from subscriber_adds sa 
